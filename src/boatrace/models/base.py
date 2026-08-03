@@ -24,6 +24,8 @@ class PredictionResult:
     reasons: dict[int, list[str]]
     scores: dict[int, float]
     feature_snapshot: dict[str, Any] = field(default_factory=dict)
+    # 券種別の期待度順候補（単勝/3連複/3連単 各2〜3）
+    tickets: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 class BasePredictor(ABC):

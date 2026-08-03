@@ -25,6 +25,9 @@ prediction:
   upset_margin_threshold: 0.08
   recent_n_races: 10
   recent_decay: 0.85
+  win_candidates: 3
+  sanrenpuku_candidates: 3
+  sanrentan_candidates: 3
 
 learning:
   min_samples_for_bias: 20

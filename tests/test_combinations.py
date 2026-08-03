@@ -34,5 +34,11 @@ def test_bundle_returns_tickets():
     assert len(bundle["candidates_trio"]) >= 3
     assert len(bundle["sanrentan"][0]) == 3
     assert len(bundle["sanrenpuku"][0]) == 3
+    tickets = bundle["tickets"]
+    assert 2 <= len(tickets["win"]) <= 3
+    assert 2 <= len(tickets["sanrenpuku"]) <= 3
+    assert 2 <= len(tickets["sanrentan"]) <= 3
+    assert abs(sum(t["stake_share"] for t in tickets["win"]) - 1.0) < 1e-6
+    assert tickets["win"][0]["prob"] >= tickets["win"][-1]["prob"]
     strengths = blend_place_strengths(win, top3_probs=top3)
     assert abs(sum(strengths.values()) - 1.0) < 1e-6

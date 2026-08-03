@@ -150,15 +150,29 @@ class MLPredictor(BasePredictor):
                 for i, w in enumerate(wakus)
             }
 
-        bundle = build_combination_bundle(win_probs, top2_probs, top3_probs)
+        cfg = get_settings().prediction
+        bundle = build_combination_bundle(
+            win_probs,
+            top2_probs,
+            top3_probs,
+            n_win=cfg.win_candidates,
+            n_sanrenpuku=cfg.sanrenpuku_candidates,
+            n_sanrentan=cfg.sanrentan_candidates,
+        )
         rankings = bundle["rankings"]
         quinella = bundle["top2_probs"]
         trio = bundle["top3_probs"]
+        tickets = bundle.get("tickets") or {}
 
         top_imp = list(self.importance.items())[:3]
         reasons: dict[int, list[str]] = {}
-        best_tf = bundle["sanrentan"][0] if bundle["sanrentan"] else rankings[:3]
-        best_tr = bundle["sanrenpuku"][0] if bundle["sanrenpuku"] else rankings[:3]
+        win_labels = [t["label"] for t in tickets.get("win", [])]
+        best_tf = tickets.get("sanrentan", [{}])[0].get("label") or (
+            "-".join(map(str, bundle["sanrentan"][0])) if bundle["sanrentan"] else ""
+        )
+        best_tr = tickets.get("sanrenpuku", [{}])[0].get("label") or (
+            "-".join(map(str, bundle["sanrenpuku"][0])) if bundle["sanrenpuku"] else ""
+        )
         for boat in features.boats:
             msgs = [
                 f"LightGBM勝率 {ml_map[boat.waku]*100:.1f}%",
@@ -168,10 +182,12 @@ class MLPredictor(BasePredictor):
                 msgs.append(f"2連対見込み {top2_probs[boat.waku]*100:.1f}%")
             if top3_probs:
                 msgs.append(f"3連対見込み {top3_probs[boat.waku]*100:.1f}%")
-            if boat.waku in best_tr:
-                msgs.append(f"本命3連複 {'-'.join(map(str, best_tr))} に含む")
-            if boat.waku in best_tf:
-                msgs.append(f"本命3連単 {'-'.join(map(str, best_tf))}")
+            if win_labels:
+                msgs.append(f"単勝候補 {', '.join(win_labels)}")
+            if best_tr:
+                msgs.append(f"本命3連複 {best_tr}")
+            if best_tf:
+                msgs.append(f"本命3連単 {best_tf}")
             for name, _imp in top_imp:
                 if name in boat.values:
                     msgs.append(f"重要特徴 {name}={boat.values[name]:.3f}")
@@ -190,6 +206,7 @@ class MLPredictor(BasePredictor):
         snap["sanrenpuku"] = bundle["sanrenpuku"]
         snap["sanrentan_probs"] = bundle["sanrentan_probs"]
         snap["sanrenpuku_probs"] = bundle["sanrenpuku_probs"]
+        snap["tickets"] = tickets
 
         return PredictionResult(
             model_name=self.name,
@@ -205,4 +222,5 @@ class MLPredictor(BasePredictor):
             reasons=reasons,
             scores={w: float(v) for w, v in zip(wakus, win_raw)},
             feature_snapshot=snap,
+            tickets=tickets,
         )

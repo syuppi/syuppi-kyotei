@@ -92,6 +92,11 @@ class PredictionService:
             "predicted_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }
+        # tickets は feature_snapshot 内にも保存済み
+        if result.tickets:
+            snap = dict(payload.get("feature_snapshot") or {})
+            snap["tickets"] = result.tickets
+            payload["feature_snapshot"] = snap
         if row is None:
             row = PredictHistory(race_card_id=race_card_id, model_name=result.model_name, **payload)
             self.session.add(row)
@@ -103,6 +108,7 @@ class PredictionService:
     @staticmethod
     def to_dict(card: RaceCard, result: PredictionResult) -> dict[str, Any]:
         snap = result.feature_snapshot or {}
+        tickets = result.tickets or snap.get("tickets") or {}
         return {
             "race_card_id": card.id,
             "venue_id": card.venue_id,
@@ -122,7 +128,11 @@ class PredictionService:
             "has_upset": result.has_upset,
             "reasons": result.reasons,
             "scores": result.scores,
-            "sanrentan": snap.get("sanrentan") or [result.rankings[:3]],
-            "sanrenpuku": snap.get("sanrenpuku")
+            "tickets": tickets,
+            "sanrentan": [t["combo"] for t in tickets.get("sanrentan", [])]
+            or snap.get("sanrentan")
+            or [result.rankings[:3]],
+            "sanrenpuku": [t["combo"] for t in tickets.get("sanrenpuku", [])]
+            or snap.get("sanrenpuku")
             or [sorted(result.candidates_trio[:3])],
         }

@@ -192,6 +192,35 @@ input, select {
 .waku .num { font-weight: 700; font-size: 1rem; }
 .waku .prob { color: var(--accent); font-size: 0.85rem; margin-top: 0.2rem; }
 .meta { margin-top: 0.75rem; color: var(--muted); font-size: 0.85rem; }
+.muted { color: var(--muted); font-weight: 400; font-size: 0.82em; }
+
+.ticket-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.85rem;
+}
+.ticket-block {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+}
+.ticket-title {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 0.35rem;
+}
+.ticket-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.ticket-list li strong {
+  font-variant-numeric: tabular-nums;
+}
 .reasons {
   margin-top: 0.7rem;
   display: grid;
@@ -262,6 +291,7 @@ th { color: var(--muted); font-weight: 600; }
   .wakus { grid-template-columns: repeat(3, 1fr); }
   .race { padding: 0.85rem; }
   .meta { word-break: break-word; }
+  .ticket-grid { grid-template-columns: 1fr; }
   .stat .value { font-size: 1.3rem; }
   table { font-size: 0.78rem; }
   th, td { padding: 0.55rem 0.5rem; }

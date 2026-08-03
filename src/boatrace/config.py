@@ -44,6 +44,9 @@ class PredictionConfig(BaseModel):
     upset_margin_threshold: float = 0.08
     recent_n_races: int = 10
     recent_decay: float = 0.85
+    win_candidates: int = 3
+    sanrenpuku_candidates: int = 3
+    sanrentan_candidates: int = 3
 
 
 class LearningConfig(BaseModel):

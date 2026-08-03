@@ -66,14 +66,23 @@ def predictions_today(
                 "upset_candidates": pred.upset_candidates,
                 "has_upset": pred.has_upset,
                 "reasons": pred.reasons,
-                "sanrentan": (pred.feature_snapshot or {}).get("sanrentan")
-                or [pred.rankings[:3]]
-                if pred.rankings
-                else [],
-                "sanrenpuku": (pred.feature_snapshot or {}).get("sanrenpuku")
-                or [sorted(pred.candidates_trio[:3])]
-                if pred.candidates_trio
-                else [],
+                "tickets": (pred.feature_snapshot or {}).get("tickets") or {},
+                "sanrentan": [
+                    t.get("combo")
+                    for t in ((pred.feature_snapshot or {}).get("tickets") or {}).get(
+                        "sanrentan", []
+                    )
+                ]
+                or (pred.feature_snapshot or {}).get("sanrentan")
+                or ([pred.rankings[:3]] if pred.rankings else []),
+                "sanrenpuku": [
+                    t.get("combo")
+                    for t in ((pred.feature_snapshot or {}).get("tickets") or {}).get(
+                        "sanrenpuku", []
+                    )
+                ]
+                or (pred.feature_snapshot or {}).get("sanrenpuku")
+                or ([sorted(pred.candidates_trio[:3])] if pred.candidates_trio else []),
                 "result": {
                     "rank1": card.result.rank1_waku if card.result else None,
                     "rank2": card.result.rank2_waku if card.result else None,

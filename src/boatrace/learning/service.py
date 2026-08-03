@@ -216,28 +216,52 @@ class LearningService:
             if not pred or not result or not result.rank1_waku:
                 continue
 
-            # 1着的中は本命一致
-            hit_win = int(pred.rankings and pred.rankings[0] == result.rank1_waku)
+            # 複数候補のカバー的中（単勝/3連複/3連単 各2〜3）
+            snap = pred.feature_snapshot or {}
+            tickets = snap.get("tickets") or {}
+
+            win_cands = [
+                int(t["combo"][0])
+                for t in tickets.get("win", [])
+                if t.get("combo")
+            ] or list(pred.candidates_win or [])[:3] or (pred.rankings[:1] if pred.rankings else [])
+            hit_win = int(result.rank1_waku in win_cands)
 
             top2_pred = set(pred.candidates_quinella[:2])
             top2_real = {result.rank1_waku, result.rank2_waku}
             hit_quinella = int(top2_real <= top2_pred) if result.rank2_waku else 0
 
-            # 3連複: 本命3艇のセット一致
-            top3_pred = set(pred.candidates_trio[:3])
             top3_real = {result.rank1_waku, result.rank2_waku, result.rank3_waku}
-            hit_trio = int(None not in top3_real and top3_real <= top3_pred)
+            hit_trio = 0
+            if None not in top3_real:
+                sp_list = tickets.get("sanrenpuku") or []
+                if sp_list:
+                    for t in sp_list:
+                        if set(t.get("combo") or []) == top3_real:
+                            hit_trio = 1
+                            break
+                else:
+                    top3_pred = set(pred.candidates_trio[:3])
+                    hit_trio = int(top3_real <= top3_pred)
 
-            # 3連単: 着順どおり
-            hit_trifecta = int(
-                bool(pred.rankings)
-                and len(pred.rankings) >= 3
-                and result.rank2_waku is not None
+            hit_trifecta = 0
+            if (
+                result.rank2_waku is not None
                 and result.rank3_waku is not None
-                and pred.rankings[0] == result.rank1_waku
-                and pred.rankings[1] == result.rank2_waku
-                and pred.rankings[2] == result.rank3_waku
-            )
+            ):
+                true_order = [
+                    result.rank1_waku,
+                    result.rank2_waku,
+                    result.rank3_waku,
+                ]
+                st_list = tickets.get("sanrentan") or []
+                if st_list:
+                    for t in st_list:
+                        if list(t.get("combo") or []) == true_order:
+                            hit_trifecta = 1
+                            break
+                elif pred.rankings and len(pred.rankings) >= 3:
+                    hit_trifecta = int(pred.rankings[:3] == true_order)
 
             slice_keys = ["all"]
             if card.weather:

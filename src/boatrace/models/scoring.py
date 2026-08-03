@@ -72,12 +72,21 @@ class ScoringPredictor(BasePredictor):
 
         quinella_probs = self._place_probs(win_probs, top_n=2)
         trio_probs = self._place_probs(win_probs, top_n=3)
-        bundle = build_combination_bundle(win_probs, quinella_probs, trio_probs)
+        cfg = self.settings.prediction
+        bundle = build_combination_bundle(
+            win_probs,
+            quinella_probs,
+            trio_probs,
+            n_win=cfg.win_candidates,
+            n_sanrenpuku=cfg.sanrenpuku_candidates,
+            n_sanrentan=cfg.sanrentan_candidates,
+        )
 
         rankings = bundle["rankings"]
         candidates_win = bundle["candidates_win"]
         candidates_quinella = bundle["candidates_quinella"]
         candidates_trio = bundle["candidates_trio"]
+        tickets = bundle.get("tickets") or {}
 
         margin = win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
         has_upset = margin < self.settings.prediction.upset_margin_threshold
@@ -90,11 +99,16 @@ class ScoringPredictor(BasePredictor):
                         upset_candidates.append(boat.waku)
 
         reasons = self._build_reasons(features, contribs, win_probs)
-        best_tf = bundle["sanrentan"][0] if bundle["sanrentan"] else rankings[:3]
-        best_tr = bundle["sanrenpuku"][0] if bundle["sanrenpuku"] else rankings[:3]
+        win_labels = [t["label"] for t in tickets.get("win", [])]
+        best_tf = tickets.get("sanrentan", [{}])[0].get("label", "")
+        best_tr = tickets.get("sanrenpuku", [{}])[0].get("label", "")
         for w, msgs in reasons.items():
-            msgs.insert(0, f"本命3連単 {'-'.join(map(str, best_tf))}")
-            msgs.insert(1, f"本命3連複 {'-'.join(map(str, best_tr))}")
+            if win_labels:
+                msgs.insert(0, f"単勝候補 {', '.join(win_labels)}")
+            if best_tr:
+                msgs.insert(1 if win_labels else 0, f"本命3連複 {best_tr}")
+            if best_tf:
+                msgs.insert(2 if win_labels else 1, f"本命3連単 {best_tf}")
 
         feature_snapshot: dict[str, Any] = {
             "env": features.env,
@@ -108,6 +122,7 @@ class ScoringPredictor(BasePredictor):
             "sanrenpuku": bundle["sanrenpuku"],
             "sanrentan_probs": bundle["sanrentan_probs"],
             "sanrenpuku_probs": bundle["sanrenpuku_probs"],
+            "tickets": tickets,
         }
 
         return PredictionResult(
@@ -124,6 +139,7 @@ class ScoringPredictor(BasePredictor):
             reasons=reasons,
             scores=scores,
             feature_snapshot=feature_snapshot,
+            tickets=tickets,
         )
 
     def _place_probs(self, win_probs: dict[int, float], top_n: int) -> dict[int, float]:
