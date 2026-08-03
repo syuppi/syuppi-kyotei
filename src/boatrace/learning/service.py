@@ -392,12 +392,14 @@ class LearningService:
     def accuracy_summary(self, days: int | None = None) -> dict[str, Any]:
         window = days or self.settings.learning.accuracy_window_days
         since = date.today() - timedelta(days=window)
+        model_name = self.settings.prediction.model_name
         rows = (
             self.session.query(AccuracyDaily)
             .filter(
                 AccuracyDaily.stat_date >= since,
                 AccuracyDaily.venue_id.is_(None),
                 AccuracyDaily.slice_key == "all",
+                AccuracyDaily.model_name == model_name,
             )
             .all()
         )
@@ -409,6 +411,7 @@ class LearningService:
                 "win_rate": 0.0,
                 "quinella_rate": 0.0,
                 "trio_rate": 0.0,
+                "model_name": model_name,
             }
         return {
             "window_days": window,
@@ -416,4 +419,5 @@ class LearningService:
             "win_rate": sum(r.hit_win for r in rows) / n,
             "quinella_rate": sum(r.hit_quinella for r in rows) / n,
             "trio_rate": sum(r.hit_trio for r in rows) / n,
+            "model_name": model_name,
         }

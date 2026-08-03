@@ -18,11 +18,14 @@
 2. 失敗時は **BOAT RACE公式HTML** へフォールバック
 3. 潮位は JMA到達確認＋天文近似（場別 `tide_sensitive` 設定あり）
 
+## 機械学習
+
 ```bash
-# 過去90日を取得→学習→本日再予想
-python scripts/backfill_learn.py 90
-python scripts/walk_forward_learn.py 90
+# 90日学習済みDB上で LightGBM を学習し、本日を再予想
+python scripts/train_lgbm.py
 ```
+
+モデルは `data/models/lgbm_win_v1.joblib` に保存され、以降の予測は自動で LightGBM（ルールベースとブレンド）を使います。
 
 各場の公式ホームページは広報・ライブ映像中心で、構造化出走表としては公式ポータル／Open APIの方が安定です。
 

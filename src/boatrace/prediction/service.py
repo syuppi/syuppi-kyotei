@@ -18,14 +18,18 @@ from boatrace.models.scoring import ScoringPredictor
 logger = get_logger(__name__)
 
 
-def get_predictor(session: Session, model: str = "scoring") -> BasePredictor:
-    if model == "ml":
-        return MLPredictor()
+def get_predictor(session: Session, model: str = "auto") -> BasePredictor:
+    from boatrace.models.ml_model import DEFAULT_MODEL_PATH
+
+    if model == "auto":
+        model = "lgbm" if DEFAULT_MODEL_PATH.exists() else "scoring"
+    if model in {"ml", "lgbm", "lgbm_v1"}:
+        return MLPredictor(session=session)
     return ScoringPredictor(session=session)
 
 
 class PredictionService:
-    def __init__(self, session: Session, model: str = "scoring"):
+    def __init__(self, session: Session, model: str = "auto"):
         self.session = session
         self.builder = FeatureBuilder(session)
         self.predictor = get_predictor(session, model=model)

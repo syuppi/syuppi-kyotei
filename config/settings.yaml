@@ -20,7 +20,7 @@ tide:
   max_retries: 3
 
 prediction:
-  model_name: "scoring_v1"
+  model_name: "lgbm_v1"
   temperature: 0.85
   upset_margin_threshold: 0.08
   recent_n_races: 10
