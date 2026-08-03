@@ -35,15 +35,16 @@
       <span>コンパクト</span>
       <input type="checkbox" id="compact-mode" checked />
     </label>
-    <button id="refresh" class="btn">再予測</button>
+    <button id="refresh" class="btn">取得して予想</button>
   </div>
+  <p id="load-status" class="meta" style="margin-top:0.6rem"></p>
 </section>
 
 <section id="summary" class="summary-row"></section>
 <section id="list" class="race-list" aria-live="polite"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=hitfilter1"></script>
+<script src="/static/app.js?v=odds-ev1"></script>
 <script>
   bootPredictions();
 </script>

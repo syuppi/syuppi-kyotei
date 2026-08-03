@@ -201,6 +201,12 @@ input, select {
 .race.is-trio-hit { border-color: rgba(62, 207, 173, 0.35); }
 .race.compact { padding: 0.75rem 0.9rem; }
 .race.compact .reasons { margin-top: 0.5rem; }
+.ev-box {
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed var(--line);
+}
+.ev-reason { color: var(--accent-2); }
 
 .wakus {
   display: grid;

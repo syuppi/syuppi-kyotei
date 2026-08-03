@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from boatrace.api.routes import accuracy, predictions, search, venues
+from boatrace.api.routes import accuracy, collect, predictions, search, venues
 from boatrace.config import get_settings
 from boatrace.logging_setup import setup_logging
 
@@ -23,6 +23,7 @@ app = FastAPI(title=settings.api.title, version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
 app.include_router(predictions.router, prefix="/api", tags=["predictions"])
+app.include_router(collect.router, prefix="/api", tags=["collect"])
 app.include_router(venues.router, prefix="/api", tags=["venues"])
 app.include_router(accuracy.router, prefix="/api", tags=["accuracy"])
 app.include_router(search.router, prefix="/api", tags=["search"])

@@ -151,11 +151,16 @@ class OpenApiCollector(BaseCollector):
                     pass
             card.fetched_at = now
             card.updated_at = now
+            odds_blob = race.get("odds")
+            from boatrace.models.odds_ev import normalize_odds_blob
+
+            odds_norm = normalize_odds_blob(odds_blob or {})
             card.raw_payload = {
                 "source": self.source_name,
                 "has_preview": bool(race.get("preview")),
                 "has_result": bool(race.get("result") and (race["result"] or {}).get("racers")),
-                "has_odds": bool(race.get("odds")),
+                "has_odds": bool(odds_norm),
+                "odds": odds_norm or None,
             }
 
             for _waku, rd in (race.get("racers") or {}).items():

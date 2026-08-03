@@ -182,25 +182,59 @@ async function bootPredictions() {
   const filterEl = document.getElementById("hit-filter");
   const sortEl = document.getElementById("hit-sort");
   const compactEl = document.getElementById("compact-mode");
+  const statusEl = document.getElementById("load-status");
   day.value = todayISO();
   await fillVenues(venue, true);
 
-  async function load(refresh = false) {
-    const params = new URLSearchParams({ day: day.value });
-    if (venue.value) params.set("venue_id", venue.value);
-    if (refresh) params.set("refresh", "true");
-    const data = await jget(`/api/predictions/today?${params}`);
-    _predCache = { data, prepared: prepareItems(data) };
-    renderPredictions();
+  function setStatus(msg) {
+    if (statusEl) statusEl.textContent = msg || "";
   }
 
-  refreshBtn.addEventListener("click", () => load(true));
-  day.addEventListener("change", () => load(false));
-  venue.addEventListener("change", () => load(false));
+  async function load(opts = {}) {
+    const { refresh = false, prepare = false } = opts;
+    const params = new URLSearchParams({ day: day.value });
+    if (venue.value) params.set("venue_id", venue.value);
+    try {
+      let data;
+      if (prepare || refresh) {
+        setStatus(prepare ? "出走表・オッズを取得して予想中…" : "再予想中…");
+        if (prepare) {
+          const res = await fetch(`/api/day/prepare?${params}`, { method: "POST" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          data = await res.json();
+        } else {
+          params.set("refresh", "true");
+          data = await jget(`/api/predictions/today?${params}`);
+        }
+      } else {
+        setStatus("読み込み中…");
+        data = await jget(`/api/predictions/today?${params}`);
+        // 日付を変えたときに予想が無ければ自動で取得＋予想
+        if (!data.items || data.items.length === 0) {
+          setStatus("データが無いため取得・予想しています…");
+          const res = await fetch(`/api/day/prepare?${params}`, { method: "POST" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          data = await res.json();
+        }
+      }
+      _predCache = { data, prepared: prepareItems(data) };
+      renderPredictions();
+      const oddsN = (data.items || []).filter((x) => x.has_odds).length;
+      setStatus(`更新済（${data.count}R / オッズあり ${oddsN}R）`);
+    } catch (e) {
+      setStatus(`エラー: ${e.message || e}`);
+      throw e;
+    }
+  }
+
+  refreshBtn.addEventListener("click", () => load({ prepare: true }));
+  day.addEventListener("change", () => load({ prepare: true }));
+  venue.addEventListener("change", () => load({ prepare: false }));
   if (filterEl) filterEl.addEventListener("change", () => renderPredictions());
   if (sortEl) sortEl.addEventListener("change", () => renderPredictions());
   if (compactEl) compactEl.addEventListener("change", () => renderPredictions());
-  await load(false);
+  // 初回: 本日が無ければ取得、あれば表示のみ（必要なら準備）
+  await load({ prepare: false });
 }
 
 function renderPredictions() {
@@ -246,10 +280,15 @@ function renderPredictions() {
     }).join("");
     const reasonTop = (item.reasons?.[item.rankings?.[0]] || item.reasons?.[String(item.rankings?.[0])] || []).slice(0, compact ? 2 : 3)
       .map((r) => `<div>・ ${r}</div>`).join("");
+    const evReasons = (item.ev_reasons || []).slice(0, 3)
+      .map((r) => `<div class="ev-reason">・ ${r}</div>`).join("");
+    const oddsBadge = item.has_odds ? '<span class="badge hit">オッズ反映</span>' : '<span class="badge upset">オッズ未取得</span>';
 
     const fmtTicket = (t, kind) => {
       const share = Math.round((Number(t.stake_share) || 0) * 100);
       const pr = Number(t.prob) || 0;
+      const odd = t.odds != null ? Number(t.odds) : null;
+      const ev = t.ev != null ? Number(t.ev) : null;
       let mark = "";
       if (hits.hasResult) {
         if (kind === "win" && Number(t.combo?.[0]) === Number(item.result.rank1)) mark = ' <span class="badge hit">的中</span>';
@@ -265,7 +304,12 @@ function renderPredictions() {
           }
         }
       }
-      return `<li><strong>${t.label}</strong>${mark} <span class="muted">期待${pct(pr)} / 配分${share}%</span></li>`;
+      const valueBadge = t.value_tag === "割安"
+        ? ' <span class="badge hit">割安</span>'
+        : (t.value_tag === "割高" ? ' <span class="badge upset">割高</span>' : "");
+      const oddsTxt = odd != null ? ` / オッズ${odd.toFixed(1)}` : "";
+      const evTxt = ev != null ? ` / EV${ev.toFixed(2)}` : "";
+      return `<li><strong>${t.label}</strong>${mark}${valueBadge} <span class="muted">確率${pct(pr)}${oddsTxt}${evTxt} / 配分${share}%</span></li>`;
     };
     const ticketBlock = (title, rows, kind) => `
       <div class="ticket-block">
@@ -324,6 +368,7 @@ function renderPredictions() {
       <article class="race ${hitClass} ${compact ? "compact" : ""}" style="animation-delay:${Math.min(idx, 12) * 0.03}s">
         <div class="race-head">
           <h2>${item.venue_name} ${item.race_no}R <span class="badge">${item.model_name || ""}</span>
+            ${oddsBadge}
             ${item.has_upset ? '<span class="badge upset">穴あり</span>' : ""}
             ${item.status === "scheduled" ? '<span class="badge">予想中</span>' : ""}
           </h2>
@@ -338,6 +383,7 @@ function renderPredictions() {
         ${exTable}
         ${scenarioHtml}
         <div class="reasons"><strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}
+          ${evReasons ? `<div class="ev-box"><strong>期待値の理由</strong>${evReasons}</div>` : ""}
           ${!compact && item.race_title ? `<div class="meta">番組: ${item.race_title}</div>` : ""}
         </div>
       </article>

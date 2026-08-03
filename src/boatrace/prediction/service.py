@@ -74,6 +74,39 @@ class PredictionService:
             result.feature_snapshot = dict(result.feature_snapshot or {})
             result.feature_snapshot["exhibition"] = exhibition_status(features)
 
+        # オッズ×モデル確率で期待値を付与
+        try:
+            from boatrace.models.odds_ev import enrich_tickets_with_ev, top_ev_reasons
+
+            card = self.session.get(RaceCard, race_card_id)
+            odds = ((card.raw_payload or {}).get("odds") if card else None) or {}
+            entry_win = {
+                int(e.waku): float(e.win_odds)
+                for e in (card.entries if card else [])
+                if e.win_odds
+            }
+            enriched = enrich_tickets_with_ev(
+                result.tickets or (result.feature_snapshot or {}).get("tickets"),
+                odds,
+                entry_win_odds=entry_win,
+            )
+            result.tickets = enriched
+            result.feature_snapshot = dict(result.feature_snapshot or {})
+            result.feature_snapshot["tickets"] = enriched
+            result.feature_snapshot["odds"] = odds or (
+                {"win": {str(k): v for k, v in entry_win.items()}} if entry_win else {}
+            )
+            result.feature_snapshot["has_odds"] = bool(odds or entry_win)
+            ev_reasons = top_ev_reasons(enriched, limit=3)
+            result.feature_snapshot["ev_reasons"] = ev_reasons
+            if ev_reasons:
+                for waku, msgs in list(result.reasons.items()):
+                    # 全艇に同じ長文を付けず、本命艇にだけEV理由を載せる
+                    if waku == result.rankings[0]:
+                        result.reasons[waku] = list(ev_reasons) + list(msgs)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("odds_ev_enrich_failed", race_card_id=race_card_id, error=str(e))
+
         if persist:
             self._save(race_card_id, result)
         return result
@@ -175,4 +208,6 @@ class PredictionService:
             "scenarios": (snap.get("scenarios") or {}).get("comments")
             or [],
             "scenario_detail": snap.get("scenarios"),
+            "ev_reasons": snap.get("ev_reasons") or [],
+            "has_odds": bool(snap.get("has_odds")),
         }

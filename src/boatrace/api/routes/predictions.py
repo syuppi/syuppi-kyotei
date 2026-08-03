@@ -73,6 +73,8 @@ def predictions_today(
                 )
                 or [],
                 "scenario_detail": (pred.feature_snapshot or {}).get("scenarios"),
+                "ev_reasons": (pred.feature_snapshot or {}).get("ev_reasons") or [],
+                "has_odds": bool((pred.feature_snapshot or {}).get("has_odds")),
                 "sanrentan": [
                     t.get("combo")
                     for t in ((pred.feature_snapshot or {}).get("tickets") or {}).get(
