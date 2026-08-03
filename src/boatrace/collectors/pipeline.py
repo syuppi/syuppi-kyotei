@@ -96,14 +96,45 @@ def collect_daily(
 def prepare_day(
     race_date: date | None = None,
     venue_ids: list[str] | None = None,
+    *,
+    fast: bool = True,
 ) -> dict[str, Any]:
-    """UIの日付変更用: その日だけ収集（lookbackなし）+ 要約."""
+    """
+    UIの日付変更用: その日だけ収集（lookbackなし）。
+    fast=True では潮汐・公式オッズを省略し、OpenAPI + turnmark のみ（524回避）。
+    """
     target = race_date or date.today()
-    collected = collect_daily(
-        race_date=target,
-        venue_ids=venue_ids,
-        include_lookback=False,
-        prefer_openapi=True,
-        include_odds=True,
-    )
-    return {"date": target.isoformat(), "collect": collected}
+    openapi = OpenApiCollector()
+    turnmark = TurnmarkOddsCollector()
+    summary: dict[str, Any] = {"date": target.isoformat(), "fast": fast, "steps": {}}
+
+    try:
+        summary["steps"]["openapi"] = openapi.collect(target, venue_ids=venue_ids)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("prepare_openapi_failed", date=target.isoformat(), error=str(e))
+        summary["steps"]["openapi_error"] = str(e)
+        # OpenAPI失敗時のみ公式HTMLへ
+        try:
+            summary["steps"]["official"] = OfficialCollector().collect(target, venue_ids=venue_ids)
+        except Exception as e2:  # noqa: BLE001
+            summary["steps"]["official_error"] = str(e2)
+
+    try:
+        summary["steps"]["turnmark_odds"] = turnmark.collect(target, venue_ids=venue_ids)
+    except Exception as e:  # noqa: BLE001
+        summary["steps"]["turnmark_odds_error"] = str(e)
+
+    if not fast:
+        try:
+            summary["steps"]["official_odds"] = OfficialOddsCollector(
+                time_budget_sec=45, workers=8
+            ).collect(target, venue_ids=venue_ids)
+        except Exception as e:  # noqa: BLE001
+            summary["steps"]["official_odds_error"] = str(e)
+        try:
+            summary["steps"]["tide"] = TideCollector().collect(target, venue_ids=venue_ids)
+        except Exception as e:  # noqa: BLE001
+            summary["steps"]["tide_error"] = str(e)
+
+    return summary
+

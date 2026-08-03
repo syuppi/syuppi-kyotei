@@ -191,49 +191,85 @@ async function bootPredictions() {
   }
 
   async function load(opts = {}) {
-    const { refresh = false, prepare = false } = opts;
+    const { refresh = false, prepare = false, force = false } = opts;
     const params = new URLSearchParams({ day: day.value });
     if (venue.value) params.set("venue_id", venue.value);
     try {
       let data;
-      if (prepare || refresh) {
-        setStatus(prepare ? "出走表・オッズを取得して予想中…" : "再予想中…");
-        if (prepare) {
-          const res = await fetch(`/api/day/prepare?${params}`, { method: "POST" });
+      if (prepare) {
+        setStatus("出走表を取得して予想中…（高速モード）");
+        const prep = new URLSearchParams(params);
+        prep.set("fast", "true");
+        if (force) prep.set("force", "true");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 90000);
+        try {
+          const res = await fetch(`/api/day/prepare?${prep}`, {
+            method: "POST",
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           data = await res.json();
-        } else {
-          params.set("refresh", "true");
+        } catch (e) {
+          clearTimeout(timer);
+          if (e.name === "AbortError") {
+            throw new Error("タイムアウト（処理が長すぎます。もう一度お試しください）");
+          }
+          // 524/502 などは既存データ表示にフォールバック
+          const msg = String(e.message || e);
+          setStatus(`${msg} → 保存済み予想を表示します`);
           data = await jget(`/api/predictions/today?${params}`);
         }
+      } else if (refresh) {
+        setStatus("再予想中…");
+        params.set("refresh", "true");
+        data = await jget(`/api/predictions/today?${params}`);
       } else {
         setStatus("読み込み中…");
         data = await jget(`/api/predictions/today?${params}`);
-        // 日付を変えたときに予想が無ければ自動で取得＋予想
         if (!data.items || data.items.length === 0) {
           setStatus("データが無いため取得・予想しています…");
-          const res = await fetch(`/api/day/prepare?${params}`, { method: "POST" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          data = await res.json();
+          const prep = new URLSearchParams(params);
+          prep.set("fast", "true");
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 90000);
+          try {
+            const res = await fetch(`/api/day/prepare?${prep}`, {
+              method: "POST",
+              signal: controller.signal,
+            });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            data = await res.json();
+          } catch (e) {
+            clearTimeout(timer);
+            throw new Error(
+              e.name === "AbortError"
+                ? "タイムアウトしました。少し待って再読み込みしてください"
+                : (e.message || e)
+            );
+          }
         }
       }
       _predCache = { data, prepared: prepareItems(data) };
       renderPredictions();
       const oddsN = (data.items || []).filter((x) => x.has_odds).length;
-      setStatus(`更新済（${data.count}R / オッズあり ${oddsN}R）`);
+      const cached = data.cached ? "（キャッシュ）" : "";
+      setStatus(`更新済${cached}（${data.count || 0}R / オッズあり ${oddsN}R）`);
     } catch (e) {
       setStatus(`エラー: ${e.message || e}`);
       throw e;
     }
   }
 
-  refreshBtn.addEventListener("click", () => load({ prepare: true }));
-  day.addEventListener("change", () => load({ prepare: true }));
+  refreshBtn.addEventListener("click", () => load({ prepare: true, force: true }));
+  day.addEventListener("change", () => load({ prepare: false }));
   venue.addEventListener("change", () => load({ prepare: false }));
   if (filterEl) filterEl.addEventListener("change", () => renderPredictions());
   if (sortEl) sortEl.addEventListener("change", () => renderPredictions());
   if (compactEl) compactEl.addEventListener("change", () => renderPredictions());
-  // 初回: 本日が無ければ取得、あれば表示のみ（必要なら準備）
+  // 初回: あれば表示、無ければ高速取得
   await load({ prepare: false });
 }
 
