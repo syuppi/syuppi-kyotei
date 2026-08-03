@@ -74,16 +74,24 @@ function renderPredictions(data) {
     }).join("");
     const reasonTop = (item.reasons?.[item.rankings?.[0]] || item.reasons?.[String(item.rankings?.[0])] || []).slice(0, 3)
       .map((r) => `<div>・ ${r}</div>`).join("");
-    const result = item.result?.rank1
-      ? `結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}`
-      : "結果: 未確定";
+    const resultHtml = (() => {
+      if (!item.result?.rank1) {
+        return `<div class="meta">結果: 未確定（予測のみ）</div>`;
+      }
+      const hit = item.rankings && item.rankings[0] === item.result.rank1;
+      return `<div class="meta">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}
+        <span class="badge ${hit ? "" : "upset"}">${hit ? "1着的中" : "1着外れ"}</span>
+        <span class="badge">事後検証</span>
+      </div>`;
+    })();
     return `
       <article class="race" style="animation-delay:${idx * 0.04}s">
         <div class="race-head">
           <h2>${item.venue_name} ${item.race_no}R <span class="badge">${item.model_name || ""}</span>
             ${item.has_upset ? '<span class="badge upset">穴あり</span>' : ""}
+            ${item.status === "scheduled" ? '<span class="badge">予想中</span>' : ""}
           </h2>
-          <div class="meta">${result}</div>
+          ${resultHtml}
         </div>
         <div class="wakus">${wakus}</div>
         <div class="meta">

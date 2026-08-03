@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session, joinedload
@@ -130,7 +131,10 @@ class FeatureBuilder:
             ),
         }
 
-        course_stats = self._load_course_stats(card.venue_id, condition_keys)
+        # リーク防止: 当該レース日より前の結果だけから場コース傾向を作る
+        course_stats = self._load_course_stats(
+            card.venue_id, condition_keys, as_of_date=card.race_date
+        )
         biases = self._load_biases(card.venue_id)
 
         # 展示・ST の相対評価用
@@ -255,8 +259,17 @@ class FeatureBuilder:
         )
 
     def _load_course_stats(
-        self, venue_id: str, condition_keys: list[str]
+        self,
+        venue_id: str,
+        condition_keys: list[str],
+        as_of_date: date | None = None,
     ) -> dict[int, dict[str, float]]:
+        """場×コース成績。as_of_date 指定時はその日より前の確定結果のみ使う（当日リーク防止）。"""
+        historical = self._course_stats_from_history(venue_id, as_of_date)
+        if historical:
+            return historical
+
+        # 履歴が足りない初期段階のみ、集計テーブル（学習済み）を参照
         rows = (
             self.session.query(VenueCourseStats)
             .filter(
@@ -265,7 +278,6 @@ class FeatureBuilder:
             )
             .all()
         )
-        # 条件付きを優先、なければ all
         by_course: dict[int, dict[str, float]] = {}
         all_stats: dict[int, dict[str, float]] = {}
         for r in rows:
@@ -277,13 +289,60 @@ class FeatureBuilder:
             }
             if r.condition_key == "all":
                 all_stats[r.course] = payload
-            else:
-                # より具体的な条件を優先
-                if r.starts >= 5:
-                    by_course[r.course] = payload
+            elif r.starts >= 5:
+                by_course[r.course] = payload
         for course, payload in all_stats.items():
             by_course.setdefault(course, payload)
         return by_course
+
+    def _course_stats_from_history(
+        self, venue_id: str, as_of_date: date | None
+    ) -> dict[int, dict[str, float]]:
+        from boatrace.db.models import RaceResult
+
+        q = (
+            self.session.query(RaceCard, RaceResult)
+            .join(RaceResult, RaceResult.race_card_id == RaceCard.id)
+            .filter(RaceCard.venue_id == venue_id, RaceCard.status == "finished")
+        )
+        if as_of_date is not None:
+            q = q.filter(RaceCard.race_date < as_of_date)
+
+        starts = {c: 0 for c in range(1, 7)}
+        wins = {c: 0 for c in range(1, 7)}
+        quinellas = {c: 0 for c in range(1, 7)}
+        trios = {c: 0 for c in range(1, 7)}
+        n_races = 0
+        for _card, result in q.all():
+            n_races += 1
+            entries = result.entry_results or []
+            for er in entries:
+                course = int(er.get("course") or er.get("waku") or 0)
+                rank = er.get("rank")
+                if not course or not rank or course not in starts:
+                    continue
+                starts[course] += 1
+                if rank == 1:
+                    wins[course] += 1
+                if rank <= 2:
+                    quinellas[course] += 1
+                if rank <= 3:
+                    trios[course] += 1
+
+        if n_races < 3:
+            return {}
+
+        out: dict[int, dict[str, float]] = {}
+        for c in range(1, 7):
+            if starts[c] <= 0:
+                continue
+            out[c] = {
+                "win_rate": wins[c] / starts[c],
+                "quinella_rate": quinellas[c] / starts[c],
+                "trio_rate": trios[c] / starts[c],
+                "starts": float(starts[c]),
+            }
+        return out
 
     def _load_biases(self, venue_id: str) -> dict[str, float]:
         rows = self.session.query(VenueBias).filter_by(venue_id=venue_id).all()
