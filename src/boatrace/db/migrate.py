@@ -26,9 +26,19 @@ RACE_CARD_COLS = {
 }
 
 
+ACCURACY_DAILY_COLS = {
+    "hit_trifecta": "INTEGER DEFAULT 0",
+    "trifecta_rate": "FLOAT DEFAULT 0",
+}
+
+
 def migrate() -> dict[str, list[str]]:
     engine = get_engine()
-    added: dict[str, list[str]] = {"race_entry": [], "race_card": []}
+    added: dict[str, list[str]] = {
+        "race_entry": [],
+        "race_card": [],
+        "accuracy_daily": [],
+    }
     insp = inspect(engine)
     with engine.begin() as conn:
         entry_cols = {c["name"] for c in insp.get_columns("race_entry")}
@@ -41,6 +51,12 @@ def migrate() -> dict[str, list[str]]:
             if name not in card_cols:
                 conn.execute(text(f"ALTER TABLE race_card ADD COLUMN {name} {typ}"))
                 added["race_card"].append(name)
+        if "accuracy_daily" in insp.get_table_names():
+            acc_cols = {c["name"] for c in insp.get_columns("accuracy_daily")}
+            for name, typ in ACCURACY_DAILY_COLS.items():
+                if name not in acc_cols:
+                    conn.execute(text(f"ALTER TABLE accuracy_daily ADD COLUMN {name} {typ}"))
+                    added["accuracy_daily"].append(name)
     logger.info("migrate_done", added=added)
     return added
 

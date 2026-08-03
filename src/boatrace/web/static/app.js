@@ -78,12 +78,23 @@ function renderPredictions(data) {
       if (!item.result?.rank1) {
         return `<div class="meta">結果: 未確定（予測のみ）</div>`;
       }
-      const hit = item.rankings && item.rankings[0] === item.result.rank1;
+      const hit1 = item.rankings && item.rankings[0] === item.result.rank1;
+      const trueTop3 = [item.result.rank1, item.result.rank2, item.result.rank3].filter(Boolean);
+      const predTrio = (item.sanrenpuku && item.sanrenpuku[0]) || (item.candidates_trio || []).slice(0, 3);
+      const hitTrio = trueTop3.length === 3 && trueTop3.every((w) => predTrio.map(Number).includes(Number(w)));
+      const predTf = (item.sanrentan && item.sanrentan[0]) || (item.rankings || []).slice(0, 3);
+      const hitTf = trueTop3.length === 3
+        && Number(predTf[0]) === Number(item.result.rank1)
+        && Number(predTf[1]) === Number(item.result.rank2)
+        && Number(predTf[2]) === Number(item.result.rank3);
       return `<div class="meta">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}
-        <span class="badge ${hit ? "" : "upset"}">${hit ? "1着的中" : "1着外れ"}</span>
-        <span class="badge">事後検証</span>
+        <span class="badge ${hit1 ? "" : "upset"}">${hit1 ? "1着的中" : "1着外れ"}</span>
+        <span class="badge ${hitTrio ? "" : "upset"}">${hitTrio ? "3連複的中" : "3連複外れ"}</span>
+        <span class="badge ${hitTf ? "" : "upset"}">${hitTf ? "3連単的中" : "3連単外れ"}</span>
       </div>`;
     })();
+    const sanrentan = (item.sanrentan && item.sanrentan[0]) || (item.rankings || []).slice(0, 3);
+    const sanrenpuku = (item.sanrenpuku && item.sanrenpuku[0]) || (item.candidates_trio || []).slice(0, 3);
     return `
       <article class="race" style="animation-delay:${idx * 0.04}s">
         <div class="race-head">
@@ -95,10 +106,10 @@ function renderPredictions(data) {
         </div>
         <div class="wakus">${wakus}</div>
         <div class="meta">
-          想定上位: ${ (item.rankings || []).join("-") } /
+          本命3連単: <strong>${(sanrentan || []).join("-")}</strong> /
+          本命3連複: <strong>${[...(sanrenpuku || [])].sort((a,b)=>a-b).join("-")}</strong> /
           1着候補: ${(item.candidates_win || []).join(",") } /
-          2連対: ${(item.candidates_quinella || []).join(",") } /
-          3連対: ${(item.candidates_trio || []).join(",") }
+          2連複: ${(item.candidates_quinella || []).join("-") }
           ${item.upset_candidates?.length ? ` / 穴: ${item.upset_candidates.join(",")}` : ""}
         </div>
         <div class="reasons"><strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}
@@ -157,7 +168,8 @@ async function bootAccuracy() {
     <div class="stat"><div class="label">対象レース</div><div class="value">${summary.n_races}</div></div>
     <div class="stat"><div class="label">1着的中率</div><div class="value">${pct(summary.win_rate)}</div></div>
     <div class="stat"><div class="label">2連対的中率</div><div class="value">${pct(summary.quinella_rate)}</div></div>
-    <div class="stat"><div class="label">3連対的中率</div><div class="value">${pct(summary.trio_rate)}</div></div>
+    <div class="stat"><div class="label">3連複的中率</div><div class="value">${pct(summary.trio_rate)}</div></div>
+    <div class="stat"><div class="label">3連単的中率</div><div class="value">${pct(summary.trifecta_rate || 0)}</div></div>
   `;
   const daily = await jget("/api/accuracy/daily?days=14");
   const rows = daily.items.map((r) => `

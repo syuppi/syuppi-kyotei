@@ -11,6 +11,7 @@ from boatrace.config import get_settings
 from boatrace.db.models import ModelWeights
 from boatrace.features.builder import DEFAULT_WEIGHTS, RaceFeatures
 from boatrace.models.base import BasePredictor, PredictionResult
+from boatrace.models.combinations import build_combination_bundle
 
 
 def softmax(xs: list[float], temperature: float = 1.0) -> list[float]:
@@ -28,7 +29,8 @@ class ScoringPredictor(BasePredictor):
 
     def __init__(self, session: Session | None = None, weights: dict[str, float] | None = None):
         self.settings = get_settings()
-        self.name = self.settings.prediction.model_name
+        # 単独利用時は scoring_v1。MLフォールバック時も内部名は維持
+        self.name = "scoring_v1"
         if weights is not None:
             self.weights = weights
         elif session is not None:
@@ -37,14 +39,15 @@ class ScoringPredictor(BasePredictor):
             self.weights = dict(DEFAULT_WEIGHTS)
 
     def _load_weights(self, session: Session) -> dict[str, float]:
-        rows = session.query(ModelWeights).filter_by(model_name=self.name).all()
+        # 重みは scoring_v1 と設定モデル名の両方を参照
+        names = ["scoring_v1", self.settings.prediction.model_name]
         weights = dict(DEFAULT_WEIGHTS)
-        if rows:
+        for name in names:
+            rows = session.query(ModelWeights).filter_by(model_name=name).all()
             for r in rows:
                 weights[r.feature_key] = r.weight
-            # 新規特徴キーがDBに無い場合はデフォルトを残す
-            for k, v in DEFAULT_WEIGHTS.items():
-                weights.setdefault(k, v)
+        for k, v in DEFAULT_WEIGHTS.items():
+            weights.setdefault(k, v)
         return weights
 
     def predict(self, features: RaceFeatures) -> PredictionResult:
@@ -67,27 +70,31 @@ class ScoringPredictor(BasePredictor):
         win_list = softmax(raw, self.settings.prediction.temperature)
         win_probs = {w: p for w, p in zip(wakus, win_list)}
 
-        # 2連対・3連対: 上位確率の相対スケール近似
         quinella_probs = self._place_probs(win_probs, top_n=2)
         trio_probs = self._place_probs(win_probs, top_n=3)
+        bundle = build_combination_bundle(win_probs, quinella_probs, trio_probs)
 
-        rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
-        candidates_win = rankings[:2]
-        candidates_quinella = rankings[:3]
-        candidates_trio = rankings[:4]
+        rankings = bundle["rankings"]
+        candidates_win = bundle["candidates_win"]
+        candidates_quinella = bundle["candidates_quinella"]
+        candidates_trio = bundle["candidates_trio"]
 
         margin = win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
         has_upset = margin < self.settings.prediction.upset_margin_threshold
         upset_candidates: list[int] = []
         if has_upset:
             upset_candidates = [w for w in rankings[1:4] if w >= 4]
-            # 展示最上位がアウトなら穴候補
             for boat in features.boats:
                 if boat.values.get("exhibition_advantage", 0) >= 0.95 and boat.waku >= 4:
                     if boat.waku not in upset_candidates:
                         upset_candidates.append(boat.waku)
 
         reasons = self._build_reasons(features, contribs, win_probs)
+        best_tf = bundle["sanrentan"][0] if bundle["sanrentan"] else rankings[:3]
+        best_tr = bundle["sanrenpuku"][0] if bundle["sanrenpuku"] else rankings[:3]
+        for w, msgs in reasons.items():
+            msgs.insert(0, f"本命3連単 {'-'.join(map(str, best_tf))}")
+            msgs.insert(1, f"本命3連複 {'-'.join(map(str, best_tr))}")
 
         feature_snapshot: dict[str, Any] = {
             "env": features.env,
@@ -97,6 +104,10 @@ class ScoringPredictor(BasePredictor):
                 for b in features.boats
             },
             "weights": self.weights,
+            "sanrentan": bundle["sanrentan"],
+            "sanrenpuku": bundle["sanrenpuku"],
+            "sanrentan_probs": bundle["sanrentan_probs"],
+            "sanrenpuku_probs": bundle["sanrenpuku_probs"],
         }
 
         return PredictionResult(

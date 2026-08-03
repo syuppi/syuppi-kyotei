@@ -203,7 +203,7 @@ class LearningService:
         )
 
         buckets: dict[tuple[Optional[str], str], dict[str, int]] = defaultdict(
-            lambda: {"n": 0, "win": 0, "quinella": 0, "trio": 0}
+            lambda: {"n": 0, "win": 0, "quinella": 0, "trio": 0, "trifecta": 0}
         )
 
         for card in cards:
@@ -216,7 +216,6 @@ class LearningService:
             if not pred or not result or not result.rank1_waku:
                 continue
 
-            hit_win = int(pred.candidates_win and result.rank1_waku in pred.candidates_win[:1])
             # 1着的中は本命一致
             hit_win = int(pred.rankings and pred.rankings[0] == result.rank1_waku)
 
@@ -224,9 +223,21 @@ class LearningService:
             top2_real = {result.rank1_waku, result.rank2_waku}
             hit_quinella = int(top2_real <= top2_pred) if result.rank2_waku else 0
 
+            # 3連複: 本命3艇のセット一致
             top3_pred = set(pred.candidates_trio[:3])
             top3_real = {result.rank1_waku, result.rank2_waku, result.rank3_waku}
             hit_trio = int(None not in top3_real and top3_real <= top3_pred)
+
+            # 3連単: 着順どおり
+            hit_trifecta = int(
+                bool(pred.rankings)
+                and len(pred.rankings) >= 3
+                and result.rank2_waku is not None
+                and result.rank3_waku is not None
+                and pred.rankings[0] == result.rank1_waku
+                and pred.rankings[1] == result.rank2_waku
+                and pred.rankings[2] == result.rank3_waku
+            )
 
             slice_keys = ["all"]
             if card.weather:
@@ -247,6 +258,7 @@ class LearningService:
                     b["win"] += hit_win
                     b["quinella"] += hit_quinella
                     b["trio"] += hit_trio
+                    b["trifecta"] += hit_trifecta
 
         summary = []
         for (venue_id, slice_key), b in buckets.items():
@@ -273,9 +285,11 @@ class LearningService:
             row.hit_win = b["win"]
             row.hit_quinella = b["quinella"]
             row.hit_trio = b["trio"]
+            row.hit_trifecta = b["trifecta"]
             row.win_rate = b["win"] / n
             row.quinella_rate = b["quinella"] / n
             row.trio_rate = b["trio"] / n
+            row.trifecta_rate = b["trifecta"] / n
             row.updated_at = datetime.utcnow()
             summary.append(
                 {
@@ -285,6 +299,7 @@ class LearningService:
                     "win_rate": row.win_rate,
                     "quinella_rate": row.quinella_rate,
                     "trio_rate": row.trio_rate,
+                    "trifecta_rate": row.trifecta_rate,
                 }
             )
         self.session.flush()
@@ -421,6 +436,7 @@ class LearningService:
                 "win_rate": 0.0,
                 "quinella_rate": 0.0,
                 "trio_rate": 0.0,
+                "trifecta_rate": 0.0,
                 "model_name": model_name,
             }
         return {
@@ -429,5 +445,6 @@ class LearningService:
             "win_rate": sum(r.hit_win for r in rows) / n,
             "quinella_rate": sum(r.hit_quinella for r in rows) / n,
             "trio_rate": sum(r.hit_trio for r in rows) / n,
+            "trifecta_rate": sum(getattr(r, "hit_trifecta", 0) or 0 for r in rows) / n,
             "model_name": model_name,
         }

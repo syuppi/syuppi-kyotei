@@ -102,6 +102,7 @@ class PredictionService:
 
     @staticmethod
     def to_dict(card: RaceCard, result: PredictionResult) -> dict[str, Any]:
+        snap = result.feature_snapshot or {}
         return {
             "race_card_id": card.id,
             "venue_id": card.venue_id,
@@ -121,4 +122,7 @@ class PredictionService:
             "has_upset": result.has_upset,
             "reasons": result.reasons,
             "scores": result.scores,
+            "sanrentan": snap.get("sanrentan") or [result.rankings[:3]],
+            "sanrenpuku": snap.get("sanrenpuku")
+            or [sorted(result.candidates_trio[:3])],
         }

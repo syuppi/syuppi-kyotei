@@ -44,6 +44,7 @@ def accuracy_daily(
                 "win_rate": r.win_rate,
                 "quinella_rate": r.quinella_rate,
                 "trio_rate": r.trio_rate,
+                "trifecta_rate": getattr(r, "trifecta_rate", 0.0) or 0.0,
             }
             for r in rows
         ]

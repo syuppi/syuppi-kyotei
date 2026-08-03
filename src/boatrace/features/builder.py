@@ -289,6 +289,8 @@ class FeatureBuilder:
                         "motor_trio_rate": entry.motor_trio_rate,
                         "boat_quinella_rate": entry.boat_quinella_rate,
                         "boat_trio_rate": entry.boat_trio_rate,
+                        "local_trio_rate": entry.local_trio_rate,
+                        "national_trio_rate": entry.national_trio_rate,
                         "course": course,
                         "previous_rank": entry.previous_rank,
                         "grade_code": grade,

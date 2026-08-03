@@ -1,4 +1,4 @@
-"""機械学習モデル（LightGBM）."""
+"""機械学習モデル（LightGBM: 1着/2連対/3連対 + 組み合わせ）."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import numpy as np
 from boatrace.config import ROOT_DIR, get_settings
 from boatrace.features.builder import RaceFeatures
 from boatrace.models.base import BasePredictor, PredictionResult
+from boatrace.models.combinations import build_combination_bundle
 from boatrace.models.dataset import FEATURE_COLUMNS, boat_feature_vector
 from boatrace.models.scoring import ScoringPredictor, softmax
 
@@ -45,6 +46,15 @@ def _intra_ranks(features: RaceFeatures) -> dict[str, list[float]]:
     }
 
 
+def _pos_proba(model: Any, X: np.ndarray) -> np.ndarray:
+    if hasattr(model, "predict_proba"):
+        proba = model.predict_proba(X)
+        if proba.ndim == 2 and proba.shape[1] >= 2:
+            return np.asarray(proba[:, 1], dtype=float)
+        return np.asarray(proba, dtype=float).reshape(-1)
+    return np.asarray(model.predict(X), dtype=float)
+
+
 class MLPredictor(BasePredictor):
     name = "lgbm_v1"
 
@@ -52,20 +62,23 @@ class MLPredictor(BasePredictor):
         self,
         model_path: str | Path | None = None,
         session=None,
-        blend_with_scoring: float = 0.25,
+        blend_with_scoring: float = 0.20,
     ):
-        self.model: Any | None = None
+        self.win_model: Any | None = None
+        self.top2_model: Any | None = None
+        self.top3_model: Any | None = None
         self.feature_columns = FEATURE_COLUMNS
         self.importance: dict[str, float] = {}
         self.fallback = ScoringPredictor(session=session)
         self.blend = blend_with_scoring
+        self.version = "win_only"
         path = Path(model_path) if model_path else DEFAULT_MODEL_PATH
         if path.exists():
             self._load(path)
 
     @classmethod
     def with_defaults(cls, session=None) -> "MLPredictor":
-        return cls(session=session, blend_with_scoring=0.25)
+        return cls(session=session, blend_with_scoring=0.20)
 
     def _load(self, path: Path) -> None:
         try:
@@ -73,17 +86,29 @@ class MLPredictor(BasePredictor):
 
             payload = joblib.load(path)
             if isinstance(payload, dict) and "model" in payload:
-                self.model = payload["model"]
+                models = payload.get("models") or {}
+                self.win_model = models.get("win") or payload["model"]
+                self.top2_model = models.get("top2")
+                self.top3_model = models.get("top3")
                 self.feature_columns = payload.get("feature_columns", FEATURE_COLUMNS)
                 self.importance = payload.get("feature_importance") or {}
+                self.version = payload.get("version") or (
+                    "place_v2" if self.top3_model is not None else "win_only"
+                )
             else:
-                self.model = payload
+                self.win_model = payload
         except Exception:
-            self.model = None
+            self.win_model = None
+            self.top2_model = None
+            self.top3_model = None
+
+    @property
+    def model(self) -> Any | None:
+        return self.win_model
 
     def predict(self, features: RaceFeatures) -> PredictionResult:
         scored = self.fallback.predict(features)
-        if self.model is None or len(features.boats) != 6:
+        if self.win_model is None or len(features.boats) != 6:
             scored.model_name = self.name + "_fallback"
             return scored
 
@@ -92,57 +117,79 @@ class MLPredictor(BasePredictor):
             [boat_feature_vector(features, i, ranks) for i in range(6)],
             dtype=np.float64,
         )
-        # 列順が保存時と違う場合に備える
-        if hasattr(self.model, "n_features_in_") and X.shape[1] != self.model.n_features_in_:
+        n_in = getattr(self.win_model, "n_features_in_", None)
+        if n_in is not None and X.shape[1] != n_in:
             scored.model_name = self.name + "_fallback"
             return scored
 
-        if hasattr(self.model, "predict_proba"):
-            proba = self.model.predict_proba(X)
-            raw = proba[:, 1] if proba.ndim == 2 and proba.shape[1] >= 2 else proba.reshape(-1)
-        else:
-            raw = np.asarray(self.model.predict(X), dtype=float)
-
-        # レース内 softmax
-        ml_probs = softmax(raw.tolist(), temperature=0.75)
         wakus = [b.waku for b in features.boats]
+        win_raw = _pos_proba(self.win_model, X)
+        ml_probs = softmax(win_raw.tolist(), temperature=0.75)
         ml_map = {w: p for w, p in zip(wakus, ml_probs)}
 
-        # ルールベースとブレンド（説明可能性と安定性）
         alpha = self.blend
         win_probs = {
             w: (1 - alpha) * ml_map[w] + alpha * scored.win_probs[w] for w in wakus
         }
-        # 再正規化
         s = sum(win_probs.values()) or 1.0
         win_probs = {w: v / s for w, v in win_probs.items()}
-        rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
 
-        # 理由: 重要特徴 + スコアリング理由
+        top2_probs = None
+        top3_probs = None
+        if self.top2_model is not None:
+            r2 = _pos_proba(self.top2_model, X)
+            # ルール側 quinella とブレンド
+            top2_probs = {
+                w: 0.8 * float(r2[i]) + 0.2 * float(scored.quinella_probs.get(w, 0.3))
+                for i, w in enumerate(wakus)
+            }
+        if self.top3_model is not None:
+            r3 = _pos_proba(self.top3_model, X)
+            top3_probs = {
+                w: 0.8 * float(r3[i]) + 0.2 * float(scored.trio_probs.get(w, 0.4))
+                for i, w in enumerate(wakus)
+            }
+
+        bundle = build_combination_bundle(win_probs, top2_probs, top3_probs)
+        rankings = bundle["rankings"]
+        quinella = bundle["top2_probs"]
+        trio = bundle["top3_probs"]
+
         top_imp = list(self.importance.items())[:3]
         reasons: dict[int, list[str]] = {}
-        for i, boat in enumerate(features.boats):
+        best_tf = bundle["sanrentan"][0] if bundle["sanrentan"] else rankings[:3]
+        best_tr = bundle["sanrenpuku"][0] if bundle["sanrenpuku"] else rankings[:3]
+        for boat in features.boats:
             msgs = [
-                f"LightGBM勝率スコア {ml_map[boat.waku]*100:.1f}%",
-                f"ブレンド後1着確率 {win_probs[boat.waku]*100:.1f}%",
+                f"LightGBM勝率 {ml_map[boat.waku]*100:.1f}%",
+                f"ブレンド後1着 {win_probs[boat.waku]*100:.1f}%",
             ]
+            if top2_probs:
+                msgs.append(f"2連対見込み {top2_probs[boat.waku]*100:.1f}%")
+            if top3_probs:
+                msgs.append(f"3連対見込み {top3_probs[boat.waku]*100:.1f}%")
+            if boat.waku in best_tr:
+                msgs.append(f"本命3連複 {'-'.join(map(str, best_tr))} に含む")
+            if boat.waku in best_tf:
+                msgs.append(f"本命3連単 {'-'.join(map(str, best_tf))}")
             for name, _imp in top_imp:
                 if name in boat.values:
                     msgs.append(f"重要特徴 {name}={boat.values[name]:.3f}")
-            msgs.extend(scored.reasons.get(boat.waku, [])[:2])
+            msgs.extend(scored.reasons.get(boat.waku, [])[:1])
             reasons[boat.waku] = msgs
 
         margin = win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
         has_upset = margin < get_settings().prediction.upset_margin_threshold
         upset = [w for w in rankings[1:4] if w >= 4] if has_upset else []
 
-        # 連対近似はスコアリング側の式を流用しつつ順位はML
-        quinella = self.fallback._place_probs(win_probs, top_n=2)
-        trio = self.fallback._place_probs(win_probs, top_n=3)
-
         snap = dict(scored.feature_snapshot)
-        snap["ml_raw"] = {str(w): float(v) for w, v in zip(wakus, raw)}
+        snap["ml_raw"] = {str(w): float(v) for w, v in zip(wakus, win_raw)}
         snap["model"] = self.name
+        snap["version"] = self.version
+        snap["sanrentan"] = bundle["sanrentan"]
+        snap["sanrenpuku"] = bundle["sanrenpuku"]
+        snap["sanrentan_probs"] = bundle["sanrentan_probs"]
+        snap["sanrenpuku_probs"] = bundle["sanrenpuku_probs"]
 
         return PredictionResult(
             model_name=self.name,
@@ -150,12 +197,12 @@ class MLPredictor(BasePredictor):
             win_probs=win_probs,
             quinella_probs=quinella,
             trio_probs=trio,
-            candidates_win=rankings[:2],
-            candidates_quinella=rankings[:3],
-            candidates_trio=rankings[:4],
+            candidates_win=bundle["candidates_win"],
+            candidates_quinella=bundle["candidates_quinella"],
+            candidates_trio=bundle["candidates_trio"],
             upset_candidates=upset,
             has_upset=has_upset,
             reasons=reasons,
-            scores={w: float(v) for w, v in zip(wakus, raw)},
+            scores={w: float(v) for w, v in zip(wakus, win_raw)},
             feature_snapshot=snap,
         )

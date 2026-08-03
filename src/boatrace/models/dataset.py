@@ -25,6 +25,8 @@ EXTRA_FEATURES = [
     "avg_st_raw",
     "local_win_raw",
     "national_win_raw",
+    "local_trio_raw",
+    "national_trio_raw",
     "motor_q_raw",
     "motor_trio_raw",
     "boat_q_raw",
@@ -115,6 +117,8 @@ def boat_feature_vector(features, boat_idx: int, ranks: dict[str, list[float]]) 
         "avg_st_raw": float(raw.get("avg_st") or 0.18),
         "local_win_raw": float(raw.get("local_win_rate") or 5.0),
         "national_win_raw": float(raw.get("national_win_rate") or 5.0),
+        "local_trio_raw": float(raw.get("local_trio_rate") or 40.0),
+        "national_trio_raw": float(raw.get("national_trio_rate") or 45.0),
         "motor_q_raw": float(raw.get("motor_quinella_rate") or 30.0),
         "motor_trio_raw": float(raw.get("motor_trio_rate") or 45.0),
         "boat_q_raw": float(raw.get("boat_quinella_rate") or 30.0),
@@ -267,3 +271,13 @@ def stack_samples(samples: list[RaceSample]) -> tuple[np.ndarray, np.ndarray, np
         np.concatenate(ys),
         np.concatenate(race_ids),
     )
+
+
+def stack_place_labels(samples: list[RaceSample]) -> tuple[np.ndarray, np.ndarray]:
+    """2連対・3連対ラベル（艇単位）."""
+    y2 = []
+    y3 = []
+    for s in samples:
+        y2.append((s.y_rank <= 2).astype(np.int32))
+        y3.append((s.y_rank <= 3).astype(np.int32))
+    return np.concatenate(y2), np.concatenate(y3)

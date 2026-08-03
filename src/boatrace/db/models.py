@@ -346,9 +346,11 @@ class AccuracyDaily(Base):
     hit_win: Mapped[int] = mapped_column(Integer, default=0)
     hit_quinella: Mapped[int] = mapped_column(Integer, default=0)
     hit_trio: Mapped[int] = mapped_column(Integer, default=0)
+    hit_trifecta: Mapped[int] = mapped_column(Integer, default=0)
     win_rate: Mapped[float] = mapped_column(Float, default=0.0)
     quinella_rate: Mapped[float] = mapped_column(Float, default=0.0)
     trio_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    trifecta_rate: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
