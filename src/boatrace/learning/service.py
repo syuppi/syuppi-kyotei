@@ -304,24 +304,36 @@ class LearningService:
     def tune_weights(self, race_date: date) -> dict[str, float]:
         """
         直近精度に基づきグローバル重みを微小調整。
-        場別 win_rate が低いスライスに効く特徴を強化する簡易ルール。
+        爆発的な偏りを防ぐため、各特徴の変動幅と下限・上限を制限する。
         """
         model_name = self.settings.prediction.model_name
-        lr = self.settings.learning.weight_lr
+        lr = min(self.settings.learning.weight_lr, 0.02)
         weights = self._ensure_weights(model_name)
 
-        # 満潮帯で精度が悪い場合、tide_adjustment を強化
+        # 初期値からの乖離を抑える
+        base = dict(DEFAULT_WEIGHTS)
+
         tide_acc = (
             self.session.query(AccuracyDaily)
-            .filter_by(stat_date=race_date, slice_key="tide_high", model_name=model_name, venue_id=None)
+            .filter_by(
+                stat_date=race_date,
+                slice_key="tide_high",
+                model_name=model_name,
+                venue_id=None,
+            )
             .one_or_none()
         )
         all_acc = (
             self.session.query(AccuracyDaily)
-            .filter_by(stat_date=race_date, slice_key="all", model_name=model_name, venue_id=None)
+            .filter_by(
+                stat_date=race_date,
+                slice_key="all",
+                model_name=model_name,
+                venue_id=None,
+            )
             .one_or_none()
         )
-        if tide_acc and all_acc and tide_acc.n_races >= 3:
+        if tide_acc and all_acc and tide_acc.n_races >= 5:
             if tide_acc.win_rate < all_acc.win_rate - 0.05:
                 weights["tide_adjustment"] = weights.get("tide_adjustment", 0.06) + lr
 
@@ -335,12 +347,17 @@ class LearningService:
             )
             .one_or_none()
         )
-        if head_acc and all_acc and head_acc.n_races >= 3:
+        if head_acc and all_acc and head_acc.n_races >= 5:
             if head_acc.win_rate < all_acc.win_rate - 0.05:
                 weights["wind_course_bias"] = weights.get("wind_course_bias", 0.06) + lr
                 weights["venue_course_win_rate"] = (
                     weights.get("venue_course_win_rate", 0.22) + lr * 0.5
                 )
+
+        # クリップ: 初期値の 0.4〜2.0 倍に制限
+        for k, b in base.items():
+            w = weights.get(k, b)
+            weights[k] = float(min(b * 2.0, max(b * 0.4, w)))
 
         # 正規化
         total = sum(weights.values()) or 1.0

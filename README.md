@@ -19,7 +19,9 @@
 3. 潮位は JMA到達確認＋天文近似（場別 `tide_sensitive` 設定あり）
 
 ```bash
-python scripts/collect_real.py   # 実データ収集→予測→学習
+# 過去90日を取得→学習→本日再予想
+python scripts/backfill_learn.py 90
+python scripts/walk_forward_learn.py 90
 ```
 
 各場の公式ホームページは広報・ライブ映像中心で、構造化出走表としては公式ポータル／Open APIの方が安定です。

@@ -28,8 +28,8 @@ prediction:
 
 learning:
   min_samples_for_bias: 20
-  weight_lr: 0.05
-  accuracy_window_days: 30
+  weight_lr: 0.02
+  accuracy_window_days: 90
 
 logging:
   level: "INFO"

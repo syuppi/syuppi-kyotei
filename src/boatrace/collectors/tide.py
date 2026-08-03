@@ -54,7 +54,12 @@ class TideCollector(BaseCollector):
         self.timeout = settings.tide.timeout_sec
         self.max_retries = settings.tide.max_retries
 
-    def collect(self, race_date: date, venue_ids: list[str] | None = None) -> dict[str, Any]:
+    def collect(
+        self,
+        race_date: date,
+        venue_ids: list[str] | None = None,
+        estimate_only: bool = False,
+    ) -> dict[str, Any]:
         venue_map = get_venue_map()
         targets = venue_ids or list(venue_map.keys())
         updated = 0
@@ -63,8 +68,10 @@ class TideCollector(BaseCollector):
             if venue is None:
                 continue
             if not venue.tide_sensitive and venue.tide_station is None:
-                # 非感潮でも0埋めスナップショットを残し欠損を明示
                 tide_info = self._neutral_tide()
+            elif estimate_only:
+                tide_info = self._estimate_astronomical(race_date, venue)
+                tide_info["source"] = "estimate"
             else:
                 tide_info = self._fetch_or_estimate(race_date, venue)
             updated += self._apply_to_races(race_date, vid, tide_info, venue)
