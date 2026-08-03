@@ -1,0 +1,220 @@
+# 24場マスター + 潮汐影響の固定設定
+# tide_station: JMA潮位観測点の対応（近似）
+# tide_sensitive: 潮汐がレースに強く影響する場
+
+venues:
+  - id: "01"
+    name: "桐生"
+    name_kana: "きりゅう"
+    prefecture: "群馬"
+    tide_sensitive: false
+    water_type: "lentic"  # 静水面
+    tide_station: null
+    typical_in_advantage: 0.55
+
+  - id: "02"
+    name: "戸田"
+    name_kana: "とだ"
+    prefecture: "埼玉"
+    tide_sensitive: false
+    water_type: "lentic"
+    tide_station: null
+    typical_in_advantage: 0.48
+
+  - id: "03"
+    name: "江戸川"
+    name_kana: "えどがわ"
+    prefecture: "東京"
+    tide_sensitive: true
+    water_type: "river"
+    tide_station: "东京"
+    typical_in_advantage: 0.42
+
+  - id: "04"
+    name: "平和島"
+    name_kana: "へいわじま"
+    prefecture: "東京"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "東京"
+    typical_in_advantage: 0.50
+
+  - id: "05"
+    name: "多摩川"
+    name_kana: "たまがわ"
+    prefecture: "東京"
+    tide_sensitive: false
+    water_type: "river"
+    tide_station: null
+    typical_in_advantage: 0.52
+
+  - id: "06"
+    name: "浜名湖"
+    name_kana: "はまなこ"
+    prefecture: "静岡"
+    tide_sensitive: true
+    water_type: "lake_sea"
+    tide_station: "舞阪"
+    typical_in_advantage: 0.51
+
+  - id: "07"
+    name: "蒲郡"
+    name_kana: "がまごおり"
+    prefecture: "愛知"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "三河港"
+    typical_in_advantage: 0.53
+
+  - id: "08"
+    name: "常滑"
+    name_kana: "とこなめ"
+    prefecture: "愛知"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "名古屋"
+    typical_in_advantage: 0.54
+
+  - id: "09"
+    name: "津"
+    name_kana: "つ"
+    prefecture: "三重"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "鳥羽"
+    typical_in_advantage: 0.52
+
+  - id: "10"
+    name: "三国"
+    name_kana: "みくに"
+    prefecture: "福井"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "敦賀"
+    typical_in_advantage: 0.55
+
+  - id: "11"
+    name: "びわこ"
+    name_kana: "びわこ"
+    prefecture: "滋賀"
+    tide_sensitive: false
+    water_type: "lake"
+    tide_station: null
+    typical_in_advantage: 0.53
+
+  - id: "12"
+    name: "住之江"
+    name_kana: "すみのえ"
+    prefecture: "大阪"
+    tide_sensitive: false
+    water_type: "lentic"
+    tide_station: null
+    typical_in_advantage: 0.56
+
+  - id: "13"
+    name: "尼崎"
+    name_kana: "あまがさき"
+    prefecture: "兵庫"
+    tide_sensitive: false
+    water_type: "lentic"
+    tide_station: null
+    typical_in_advantage: 0.54
+
+  - id: "14"
+    name: "鳴門"
+    name_kana: "なると"
+    prefecture: "徳島"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "小松島"
+    typical_in_advantage: 0.50
+
+  - id: "15"
+    name: "丸亀"
+    name_kana: "まるがめ"
+    prefecture: "香川"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "高松"
+    typical_in_advantage: 0.53
+
+  - id: "16"
+    name: "児島"
+    name_kana: "こじま"
+    prefecture: "岡山"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "宇野"
+    typical_in_advantage: 0.52
+
+  - id: "17"
+    name: "宮島"
+    name_kana: "みやじま"
+    prefecture: "広島"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "広島"
+    typical_in_advantage: 0.51
+
+  - id: "18"
+    name: "徳山"
+    name_kana: "とくやま"
+    prefecture: "山口"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "徳山"
+    typical_in_advantage: 0.54
+
+  - id: "19"
+    name: "下関"
+    name_kana: "しものせき"
+    prefecture: "山口"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "下関"
+    typical_in_advantage: 0.52
+
+  - id: "20"
+    name: "若松"
+    name_kana: "わかまつ"
+    prefecture: "福岡"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "門司"
+    typical_in_advantage: 0.51
+
+  - id: "21"
+    name: "芦屋"
+    name_kana: "あしや"
+    prefecture: "福岡"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "苅田"
+    typical_in_advantage: 0.53
+
+  - id: "22"
+    name: "福岡"
+    name_kana: "ふくおか"
+    prefecture: "福岡"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "博多"
+    typical_in_advantage: 0.50
+
+  - id: "23"
+    name: "唐津"
+    name_kana: "からつ"
+    prefecture: "佐賀"
+    tide_sensitive: true
+    water_type: "sea"
+    tide_station: "唐津"
+    typical_in_advantage: 0.52
+
+  - id: "24"
+    name: "大村"
+    name_kana: "おおむら"
+    prefecture: "長崎"
+    tide_sensitive: false
+    water_type: "lentic"
+    tide_station: null
+    typical_in_advantage: 0.58

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}条件検索 — BOAT FORECAST{% endblock %}
+{% block content %}
+<section class="hero-panel compact">
+  <p class="eyebrow">Search</p>
+  <h1>選手・号艇・条件の検索</h1>
+  <p class="lede">場・枠番・選手・風速・満潮付近などの組み合わせで絞り込みます。</p>
+  <div class="controls wrap">
+    <label>場 <select id="venue"><option value="">すべて</option></select></label>
+    <label>枠 <input id="waku" type="number" min="1" max="6" placeholder="1-6" /></label>
+    <label>選手ID <input id="racer" type="text" maxlength="4" placeholder="登録番号" /></label>
+    <label>風速≧ <input id="wind" type="number" step="0.1" placeholder="例: 3" /></label>
+    <label>満潮付近
+      <select id="tide">
+        <option value="">指定なし</option>
+        <option value="true">はい</option>
+        <option value="false">いいえ</option>
+      </select>
+    </label>
+    <button id="run" class="btn">検索</button>
+  </div>
+</section>
+<section id="results" class="table-wrap"></section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js"></script>
+<script>bootSearch();</script>
+{% endblock %}

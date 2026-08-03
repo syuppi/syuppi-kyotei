@@ -1,0 +1,41 @@
+# ボートレース予想システム設定
+
+database:
+  url: "sqlite:///./data/boatrace.db"
+  echo: false
+
+collect:
+  base_url: "https://www.boatrace.jp"
+  timeout_sec: 20
+  max_retries: 3
+  retry_backoff_sec: 2.0
+  user_agent: "Mozilla/5.0 (compatible; BoatRacePredict/1.0; +local)"
+  lookback_days: 7
+  request_interval_sec: 0.4
+
+tide:
+  jma_base_url: "https://www.data.jma.go.jp"
+  kaiho_base_url: "https://www1.kaiho.mlit.go.jp"
+  timeout_sec: 20
+  max_retries: 3
+
+prediction:
+  model_name: "scoring_v1"
+  temperature: 0.85
+  upset_margin_threshold: 0.08
+  recent_n_races: 10
+  recent_decay: 0.85
+
+learning:
+  min_samples_for_bias: 20
+  weight_lr: 0.05
+  accuracy_window_days: 30
+
+logging:
+  level: "INFO"
+  json_logs: false
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  title: "BoatRace Prediction System"

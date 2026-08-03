@@ -1,0 +1,171 @@
+"""説明可能なルールベース・スコアリングモデル."""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from boatrace.config import get_settings
+from boatrace.db.models import ModelWeights
+from boatrace.features.builder import DEFAULT_WEIGHTS, RaceFeatures
+from boatrace.models.base import BasePredictor, PredictionResult
+
+
+def softmax(xs: list[float], temperature: float = 1.0) -> list[float]:
+    if not xs:
+        return []
+    t = max(temperature, 1e-6)
+    m = max(xs)
+    exps = [math.exp((x - m) / t) for x in xs]
+    s = sum(exps) or 1.0
+    return [e / s for e in exps]
+
+
+class ScoringPredictor(BasePredictor):
+    name = "scoring_v1"
+
+    def __init__(self, session: Session | None = None, weights: dict[str, float] | None = None):
+        self.settings = get_settings()
+        self.name = self.settings.prediction.model_name
+        if weights is not None:
+            self.weights = weights
+        elif session is not None:
+            self.weights = self._load_weights(session)
+        else:
+            self.weights = dict(DEFAULT_WEIGHTS)
+
+    def _load_weights(self, session: Session) -> dict[str, float]:
+        rows = session.query(ModelWeights).filter_by(model_name=self.name).all()
+        if not rows:
+            return dict(DEFAULT_WEIGHTS)
+        return {r.feature_key: r.weight for r in rows}
+
+    def predict(self, features: RaceFeatures) -> PredictionResult:
+        scores: dict[int, float] = {}
+        contribs: dict[int, dict[str, float]] = {}
+
+        for boat in features.boats:
+            total = 0.0
+            parts: dict[str, float] = {}
+            for key, weight in self.weights.items():
+                val = boat.values.get(key, 0.5)
+                c = weight * val
+                parts[key] = c
+                total += c
+            scores[boat.waku] = total
+            contribs[boat.waku] = parts
+
+        wakus = [b.waku for b in features.boats]
+        raw = [scores[w] for w in wakus]
+        win_list = softmax(raw, self.settings.prediction.temperature)
+        win_probs = {w: p for w, p in zip(wakus, win_list)}
+
+        # 2連対・3連対: 上位確率の相対スケール近似
+        quinella_probs = self._place_probs(win_probs, top_n=2)
+        trio_probs = self._place_probs(win_probs, top_n=3)
+
+        rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
+        candidates_win = rankings[:2]
+        candidates_quinella = rankings[:3]
+        candidates_trio = rankings[:4]
+
+        margin = win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
+        has_upset = margin < self.settings.prediction.upset_margin_threshold
+        upset_candidates: list[int] = []
+        if has_upset:
+            upset_candidates = [w for w in rankings[1:4] if w >= 4]
+            # 展示最上位がアウトなら穴候補
+            for boat in features.boats:
+                if boat.values.get("exhibition_advantage", 0) >= 0.95 and boat.waku >= 4:
+                    if boat.waku not in upset_candidates:
+                        upset_candidates.append(boat.waku)
+
+        reasons = self._build_reasons(features, contribs, win_probs)
+
+        feature_snapshot: dict[str, Any] = {
+            "env": features.env,
+            "condition_keys": features.condition_keys,
+            "boats": {
+                str(b.waku): {"values": b.values, "raw": b.raw, "missing": b.missing}
+                for b in features.boats
+            },
+            "weights": self.weights,
+        }
+
+        return PredictionResult(
+            model_name=self.name,
+            rankings=rankings,
+            win_probs=win_probs,
+            quinella_probs=quinella_probs,
+            trio_probs=trio_probs,
+            candidates_win=candidates_win,
+            candidates_quinella=candidates_quinella,
+            candidates_trio=candidates_trio,
+            upset_candidates=upset_candidates,
+            has_upset=has_upset,
+            reasons=reasons,
+            scores=scores,
+            feature_snapshot=feature_snapshot,
+        )
+
+    def _place_probs(self, win_probs: dict[int, float], top_n: int) -> dict[int, float]:
+        """着以内確率の簡易近似: P(in top_n) ∝ P(win)^(0.7) を正規化しつつ底上げ."""
+        items = list(win_probs.items())
+        raw = {w: (p**0.7) + 0.02 for w, p in items}
+        # 上位に入りやすいようにスケール
+        s = sum(raw.values()) or 1.0
+        base = {w: v / s for w, v in raw.items()}
+        # top_n に入る期待を反映して再スケール（合計は top_n 前後になるようクリップ）
+        factor = top_n / max(sum(base.values()), 1e-9)
+        out = {w: min(0.95, v * factor * 0.85) for w, v in base.items()}
+        return out
+
+    def _build_reasons(
+        self,
+        features: RaceFeatures,
+        contribs: dict[int, dict[str, float]],
+        win_probs: dict[int, float],
+    ) -> dict[int, list[str]]:
+        label = {
+            "venue_course_win_rate": "この場のコース別1着率が高い",
+            "local_win_rate": "当地1着率が高い",
+            "exhibition_advantage": "展示タイムが上位",
+            "motor_quinella_rate": "モーター2連対率が高い",
+            "national_win_rate": "全国勝率が高い",
+            "recent_form": "直近成績が良い",
+            "boat_quinella_rate": "ボート2連対率が高い",
+            "st_advantage": "平均STが優位",
+            "tide_adjustment": "潮位条件がこのコースに有利",
+            "wind_course_bias": "風向・風速がこのコースに有利",
+        }
+        neg_label = {
+            "tide_adjustment": "満潮付近でインの信頼度が低下",
+            "wind_course_bias": "向かい風で差し・まくり傾向",
+        }
+
+        reasons: dict[int, list[str]] = {}
+        env = features.env
+        for boat in features.boats:
+            parts = contribs[boat.waku]
+            top = sorted(parts.items(), key=lambda x: x[1], reverse=True)[:3]
+            msgs: list[str] = []
+            for key, val in top:
+                msgs.append(f"{label.get(key, key)}（寄与 {val:.3f}）")
+
+            # 環境特記
+            if env.get("tide_sensitive") and env.get("near_high_tide") and boat.waku == 1:
+                msgs.append(neg_label["tide_adjustment"])
+            if env.get("wind_bucket") in {"head", "head_light"} and (env.get("wind_speed") or 0) >= 3:
+                if boat.waku >= 4 and parts.get("wind_course_bias", 0) > 0.03:
+                    msgs.append("向かい風3m以上で差し・まくり余地")
+                if boat.waku == 1:
+                    msgs.append(neg_label["wind_course_bias"])
+
+            if boat.raw.get("exhibition_time") is not None:
+                msgs.append(f"展示タイム {boat.raw['exhibition_time']:.2f}")
+
+            msgs.append(f"1着確率 {win_probs[boat.waku]*100:.1f}%")
+            reasons[boat.waku] = msgs
+        return reasons
