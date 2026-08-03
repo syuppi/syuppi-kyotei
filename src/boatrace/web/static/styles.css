@@ -175,6 +175,32 @@ input, select {
   background: rgba(240,180,41,0.18);
   color: var(--accent-2);
 }
+.badge.hit {
+  background: rgba(62, 207, 173, 0.22);
+  color: var(--accent);
+}
+.check-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  padding-bottom: 0.35rem;
+}
+.check-label input {
+  min-width: auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--accent);
+}
+.stat .sub {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 500;
+  margin-left: 0.15rem;
+}
+.race.is-tf-hit { border-color: rgba(62, 207, 173, 0.55); }
+.race.is-trio-hit { border-color: rgba(62, 207, 173, 0.35); }
+.race.compact { padding: 0.75rem 0.9rem; }
+.race.compact .reasons { margin-top: 0.5rem; }
 
 .wakus {
   display: grid;

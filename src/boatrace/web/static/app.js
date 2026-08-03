@@ -29,10 +29,159 @@ async function fillVenues(selectEl, includeAll = true) {
   }
 }
 
+function fillShares(rows) {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const sum = list.reduce((a, r) => a + (Number(r.prob) || 0), 0) || 1;
+  return list.map((r) => ({
+    ...r,
+    stake_share: r.stake_share || (Number(r.prob) || 0) / sum,
+  }));
+}
+
+function normalizeTickets(item) {
+  const tickets = item.tickets && typeof item.tickets === "object" ? item.tickets : {};
+  const probs = item.win_probs || {};
+
+  let winTickets = Array.isArray(tickets.win) ? tickets.win : [];
+  if (!winTickets.length) {
+    winTickets = (item.candidates_win || []).map((w, i) => ({
+      rank: i + 1,
+      combo: [w],
+      label: String(w),
+      prob: probs[w] ?? probs[String(w)] ?? 0,
+      stake_share: 0,
+    }));
+  }
+
+  let spTickets = Array.isArray(tickets.sanrenpuku) ? tickets.sanrenpuku : [];
+  if (!spTickets.length) {
+    const src = item.sanrenpuku || [];
+    spTickets = src.slice(0, 3).map((c, i) => {
+      const combo = Array.isArray(c) ? c.map(Number) : [];
+      return {
+        rank: i + 1,
+        combo,
+        label: [...combo].sort((a, b) => a - b).join("-"),
+        prob: 0,
+        stake_share: 0,
+      };
+    });
+  }
+
+  let stTickets = Array.isArray(tickets.sanrentan) ? tickets.sanrentan : [];
+  if (!stTickets.length) {
+    const src = item.sanrentan || (item.rankings ? [item.rankings.slice(0, 3)] : []);
+    stTickets = src.slice(0, 3).map((c, i) => {
+      const combo = Array.isArray(c) ? c.map(Number) : [];
+      return {
+        rank: i + 1,
+        combo,
+        label: combo.join("-"),
+        prob: 0,
+        stake_share: 0,
+      };
+    });
+  }
+
+  // trio fallback from candidates_trio if still empty
+  if (!spTickets.length && item.candidates_trio?.length >= 3) {
+    const combo = item.candidates_trio.slice(0, 3).map(Number);
+    spTickets = [{
+      rank: 1,
+      combo: [...combo].sort((a, b) => a - b),
+      label: [...combo].sort((a, b) => a - b).join("-"),
+      prob: 0,
+      stake_share: 1,
+    }];
+  }
+
+  return {
+    wins: fillShares(winTickets).slice(0, 3),
+    sps: fillShares(spTickets).slice(0, 3),
+    sts: fillShares(stTickets).slice(0, 3),
+  };
+}
+
+function hitFlags(item, wins, sps, sts) {
+  const r = item.result || {};
+  const hasResult = r.rank1 != null;
+  const trueTop3 = [r.rank1, r.rank2, r.rank3].filter((x) => x != null);
+  const hitWin = hasResult && wins.some((t) => Number(t.combo?.[0]) === Number(r.rank1));
+  const hitTrio = trueTop3.length === 3 && sps.some((t) => {
+    const set = new Set((t.combo || []).map(Number));
+    return trueTop3.every((w) => set.has(Number(w))) && set.size === 3;
+  });
+  const hitTf = trueTop3.length === 3 && sts.some((t) => {
+    const c = (t.combo || []).map(Number);
+    return c.length === 3
+      && c[0] === Number(r.rank1)
+      && c[1] === Number(r.rank2)
+      && c[2] === Number(r.rank3);
+  });
+  return {
+    hasResult,
+    hitWin,
+    hitTrio,
+    hitTf,
+    anyHit: hitWin || hitTrio || hitTf,
+  };
+}
+
+let _predCache = { data: null, prepared: [] };
+
+function prepareItems(data) {
+  return (data.items || []).map((item) => {
+    const { wins, sps, sts } = normalizeTickets(item);
+    const hits = hitFlags(item, wins, sps, sts);
+    return { item, wins, sps, sts, hits };
+  });
+}
+
+function filterAndSortPrepared(prepared) {
+  const filterEl = document.getElementById("hit-filter");
+  const sortEl = document.getElementById("hit-sort");
+  const filter = filterEl ? filterEl.value : "all";
+  const sort = sortEl ? sortEl.value : "venue";
+
+  let rows = prepared.slice();
+  rows = rows.filter(({ hits }) => {
+    if (filter === "all") return true;
+    if (filter === "any_hit") return hits.anyHit;
+    if (filter === "win_hit") return hits.hitWin;
+    if (filter === "trio_hit") return hits.hitTrio;
+    if (filter === "trifecta_hit") return hits.hitTf;
+    if (filter === "miss") return hits.hasResult && !hits.anyHit;
+    if (filter === "pending") return !hits.hasResult;
+    return true;
+  });
+
+  const score = (h) => (h.hitTf ? 4 : 0) + (h.hitTrio ? 2 : 0) + (h.hitWin ? 1 : 0);
+  rows.sort((a, b) => {
+    if (sort === "hit_desc") {
+      const d = score(b.hits) - score(a.hits);
+      if (d) return d;
+    } else if (sort === "hit_asc") {
+      const d = score(a.hits) - score(b.hits);
+      if (d) return d;
+    } else if (sort === "race_no") {
+      const d = a.item.race_no - b.item.race_no;
+      if (d) return d;
+    }
+    // default / tie-break: venue then race
+    const v = String(a.item.venue_id).localeCompare(String(b.item.venue_id));
+    if (v) return v;
+    return a.item.race_no - b.item.race_no;
+  });
+  return rows;
+}
+
 async function bootPredictions() {
   const day = document.getElementById("day");
   const venue = document.getElementById("venue");
   const refreshBtn = document.getElementById("refresh");
+  const filterEl = document.getElementById("hit-filter");
+  const sortEl = document.getElementById("hit-sort");
+  const compactEl = document.getElementById("compact-mode");
   day.value = todayISO();
   await fillVenues(venue, true);
 
@@ -41,78 +190,93 @@ async function bootPredictions() {
     if (venue.value) params.set("venue_id", venue.value);
     if (refresh) params.set("refresh", "true");
     const data = await jget(`/api/predictions/today?${params}`);
-    renderPredictions(data);
+    _predCache = { data, prepared: prepareItems(data) };
+    renderPredictions();
   }
 
   refreshBtn.addEventListener("click", () => load(true));
   day.addEventListener("change", () => load(false));
   venue.addEventListener("change", () => load(false));
+  if (filterEl) filterEl.addEventListener("change", () => renderPredictions());
+  if (sortEl) sortEl.addEventListener("change", () => renderPredictions());
+  if (compactEl) compactEl.addEventListener("change", () => renderPredictions());
   await load(false);
 }
 
-function renderPredictions(data) {
+function renderPredictions() {
   const summary = document.getElementById("summary");
   const list = document.getElementById("list");
-  const upsetCount = data.items.filter((x) => x.has_upset).length;
+  const data = _predCache.data;
+  if (!data) return;
+
+  const prepared = _predCache.prepared;
+  const filtered = filterAndSortPrepared(prepared);
+  const compact = document.getElementById("compact-mode")?.checked;
+
+  const upsetCount = prepared.filter((x) => x.item.has_upset).length;
+  const hitAny = prepared.filter((x) => x.hits.anyHit).length;
+  const hitTf = prepared.filter((x) => x.hits.hitTf).length;
+  const hitTrio = prepared.filter((x) => x.hits.hitTrio).length;
+  const settled = prepared.filter((x) => x.hits.hasResult).length;
+
   summary.innerHTML = `
     <div class="stat"><div class="label">対象レース</div><div class="value">${data.count}</div></div>
+    <div class="stat"><div class="label">表示中</div><div class="value">${filtered.length}</div></div>
+    <div class="stat"><div class="label">的中（いずれか）</div><div class="value">${hitAny}<span class="sub"> / ${settled}</span></div></div>
+    <div class="stat"><div class="label">3連複 / 3連単的中</div><div class="value">${hitTrio} / ${hitTf}</div></div>
     <div class="stat"><div class="label">穴候補あり</div><div class="value">${upsetCount}</div></div>
     <div class="stat"><div class="label">日付</div><div class="value" style="font-size:1.1rem">${data.date}</div></div>
   `;
 
-  if (!data.items.length) {
+  if (!prepared.length) {
     list.innerHTML = `<p class="lede">予測がありません。デモデータを投入するか「再予測」を実行してください。</p>`;
     return;
   }
+  if (!filtered.length) {
+    list.innerHTML = `<p class="lede">条件に合うレースがありません。フィルタを変更してください。</p>`;
+    return;
+  }
 
-  list.innerHTML = data.items.map((item, idx) => {
+  list.innerHTML = filtered.map(({ item, wins, sps, sts, hits }, idx) => {
     const probs = item.win_probs || {};
-    const tickets = item.tickets || {};
-    const winTickets = tickets.win || (item.candidates_win || []).map((w, i) => ({
-      rank: i + 1, combo: [w], label: String(w),
-      prob: probs[w] ?? probs[String(w)] ?? 0, stake_share: 0,
-    }));
-    const spTickets = tickets.sanrenpuku || (item.sanrenpuku || []).slice(0, 3).map((c, i) => ({
-      rank: i + 1, combo: c, label: [...c].sort((a,b)=>a-b).join("-"), prob: 0, stake_share: 0,
-    }));
-    const stTickets = tickets.sanrentan || (item.sanrentan || []).slice(0, 3).map((c, i) => ({
-      rank: i + 1, combo: c, label: c.join("-"), prob: 0, stake_share: 0,
-    }));
-    // stake_share が無い古いデータ向けに再計算
-    const fillShares = (rows) => {
-      const sum = rows.reduce((a, r) => a + (Number(r.prob) || 0), 0) || 1;
-      return rows.map((r) => ({
-        ...r,
-        stake_share: r.stake_share || ((Number(r.prob) || 0) / sum),
-      }));
-    };
-    const wins = fillShares(winTickets).slice(0, 3);
-    const sps = fillShares(spTickets).slice(0, 3);
-    const sts = fillShares(stTickets).slice(0, 3);
-
-    const wakus = [1,2,3,4,5,6].map((w) => {
+    const wakus = [1, 2, 3, 4, 5, 6].map((w) => {
       const p = probs[w] ?? probs[String(w)] ?? 0;
       const top = wins.some((t) => Number(t.combo?.[0]) === w);
       return `<div class="waku ${top ? "top" : ""}"><div class="num">${w}</div><div class="prob">${pct(p)}</div></div>`;
     }).join("");
-    const reasonTop = (item.reasons?.[item.rankings?.[0]] || item.reasons?.[String(item.rankings?.[0])] || []).slice(0, 3)
+    const reasonTop = (item.reasons?.[item.rankings?.[0]] || item.reasons?.[String(item.rankings?.[0])] || []).slice(0, compact ? 2 : 3)
       .map((r) => `<div>・ ${r}</div>`).join("");
 
-    const fmtTicket = (t) => {
+    const fmtTicket = (t, kind) => {
       const share = Math.round((Number(t.stake_share) || 0) * 100);
       const pr = Number(t.prob) || 0;
-      return `<li><strong>${t.label}</strong> <span class="muted">期待${pct(pr)} / 配分${share}%</span></li>`;
+      let mark = "";
+      if (hits.hasResult) {
+        if (kind === "win" && Number(t.combo?.[0]) === Number(item.result.rank1)) mark = ' <span class="badge hit">的中</span>';
+        if (kind === "trio") {
+          const trueTop3 = [item.result.rank1, item.result.rank2, item.result.rank3];
+          const set = new Set((t.combo || []).map(Number));
+          if (trueTop3.every((w) => set.has(Number(w))) && set.size === 3) mark = ' <span class="badge hit">的中</span>';
+        }
+        if (kind === "tf") {
+          const c = (t.combo || []).map(Number);
+          if (c[0] === Number(item.result.rank1) && c[1] === Number(item.result.rank2) && c[2] === Number(item.result.rank3)) {
+            mark = ' <span class="badge hit">的中</span>';
+          }
+        }
+      }
+      return `<li><strong>${t.label}</strong>${mark} <span class="muted">期待${pct(pr)} / 配分${share}%</span></li>`;
     };
-    const ticketBlock = (title, rows) => `
+    const ticketBlock = (title, rows, kind) => `
       <div class="ticket-block">
         <div class="ticket-title">${title}</div>
-        <ol class="ticket-list">${rows.map(fmtTicket).join("") || "<li>候補なし</li>"}</ol>
+        <ol class="ticket-list">${rows.map((t) => fmtTicket(t, kind)).join("") || "<li>候補なし</li>"}</ol>
       </div>`;
 
     const ex = item.exhibition || {};
     const exEntries = ex.entries || [];
     const exPhase = ex.phase || (ex.complete ? "試走反映済" : "試走前");
-    const exTable = exEntries.length ? `
+    const exTable = (!compact && exEntries.length) ? `
       <div class="ex-wrap">
         <div class="ticket-title">試走・展示 <span class="badge">${exPhase}</span></div>
         <table class="ex-table">
@@ -132,10 +296,10 @@ function renderPredictions(data) {
             }).join("")}
           </tbody>
         </table>
-      </div>` : `<div class="meta">試走データ未取得（シナリオコメントを参照）</div>`;
+      </div>` : "";
 
     const scenarioComments = item.scenarios || (item.scenario_detail && item.scenario_detail.comments) || [];
-    const scenarioHtml = scenarioComments.length ? `
+    const scenarioHtml = (!compact && scenarioComments.length) ? `
       <div class="scenario-wrap">
         <div class="ticket-title">試走シナリオ（期待度の変化）</div>
         <ul class="scenario-list">
@@ -144,30 +308,20 @@ function renderPredictions(data) {
       </div>` : "";
 
     const resultHtml = (() => {
-      if (!item.result?.rank1) {
+      if (!hits.hasResult) {
         return `<div class="meta">結果: 未確定（予測のみ）</div>`;
       }
-      const trueTop3 = [item.result.rank1, item.result.rank2, item.result.rank3].filter((x) => x != null);
-      const hit1 = wins.some((t) => Number(t.combo?.[0]) === Number(item.result.rank1));
-      const hitTrio = trueTop3.length === 3 && sps.some((t) => {
-        const set = new Set((t.combo || []).map(Number));
-        return trueTop3.every((w) => set.has(Number(w)));
-      });
-      const hitTf = trueTop3.length === 3 && sts.some((t) => {
-        const c = (t.combo || []).map(Number);
-        return c[0] === Number(item.result.rank1)
-          && c[1] === Number(item.result.rank2)
-          && c[2] === Number(item.result.rank3);
-      });
       return `<div class="meta">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}
-        <span class="badge ${hit1 ? "" : "upset"}">${hit1 ? "単勝的中" : "単勝外れ"}</span>
-        <span class="badge ${hitTrio ? "" : "upset"}">${hitTrio ? "3連複的中" : "3連複外れ"}</span>
-        <span class="badge ${hitTf ? "" : "upset"}">${hitTf ? "3連単的中" : "3連単外れ"}</span>
+        <span class="badge ${hits.hitWin ? "hit" : "upset"}">${hits.hitWin ? "単勝的中" : "単勝外れ"}</span>
+        <span class="badge ${hits.hitTrio ? "hit" : "upset"}">${hits.hitTrio ? "3連複的中" : "3連複外れ"}</span>
+        <span class="badge ${hits.hitTf ? "hit" : "upset"}">${hits.hitTf ? "3連単的中" : "3連単外れ"}</span>
       </div>`;
     })();
 
+    const hitClass = hits.hitTf ? "is-tf-hit" : hits.hitTrio ? "is-trio-hit" : hits.hitWin ? "is-win-hit" : "";
+
     return `
-      <article class="race" style="animation-delay:${idx * 0.04}s">
+      <article class="race ${hitClass} ${compact ? "compact" : ""}" style="animation-delay:${Math.min(idx, 12) * 0.03}s">
         <div class="race-head">
           <h2>${item.venue_name} ${item.race_no}R <span class="badge">${item.model_name || ""}</span>
             ${item.has_upset ? '<span class="badge upset">穴あり</span>' : ""}
@@ -177,14 +331,14 @@ function renderPredictions(data) {
         </div>
         <div class="wakus">${wakus}</div>
         <div class="ticket-grid">
-          ${ticketBlock("単勝 候補", wins)}
-          ${ticketBlock("3連複 候補", sps)}
-          ${ticketBlock("3連単 候補", sts)}
+          ${ticketBlock("単勝 候補", wins, "win")}
+          ${ticketBlock("3連複 候補", sps, "trio")}
+          ${ticketBlock("3連単 候補", sts, "tf")}
         </div>
         ${exTable}
         ${scenarioHtml}
         <div class="reasons"><strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}
-          ${item.race_title ? `<div class="meta">番組: ${item.race_title}</div>` : ""}
+          ${!compact && item.race_title ? `<div class="meta">番組: ${item.race_title}</div>` : ""}
         </div>
       </article>
     `;
