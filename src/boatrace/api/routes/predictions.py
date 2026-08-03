@@ -67,6 +67,12 @@ def predictions_today(
                 "has_upset": pred.has_upset,
                 "reasons": pred.reasons,
                 "tickets": (pred.feature_snapshot or {}).get("tickets") or {},
+                "exhibition": (pred.feature_snapshot or {}).get("exhibition"),
+                "scenarios": ((pred.feature_snapshot or {}).get("scenarios") or {}).get(
+                    "comments"
+                )
+                or [],
+                "scenario_detail": (pred.feature_snapshot or {}).get("scenarios"),
                 "sanrentan": [
                     t.get("combo")
                     for t in ((pred.feature_snapshot or {}).get("tickets") or {}).get(
@@ -146,6 +152,10 @@ def prediction_detail(race_card_id: int, db: Session = Depends(get_db)) -> dict:
                     "national_win_rate": e.national_win_rate,
                     "avg_st": e.avg_st,
                     "exhibition_time": e.exhibition_time,
+                    "exhibition_st": e.exhibition_st,
+                    "estimated_course": e.estimated_course,
+                    "tilt": e.tilt,
+                    "weight_adjustment": e.weight_adjustment,
                     "motor_quinella_rate": e.motor_quinella_rate,
                     "boat_quinella_rate": e.boat_quinella_rate,
                 }
@@ -162,6 +172,14 @@ def prediction_detail(race_card_id: int, db: Session = Depends(get_db)) -> dict:
             "upset_candidates": pred.upset_candidates if pred else None,
             "has_upset": pred.has_upset if pred else None,
             "reasons": pred.reasons if pred else None,
+            "exhibition": (pred.feature_snapshot or {}).get("exhibition") if pred else None,
+            "scenarios": ((pred.feature_snapshot or {}).get("scenarios") or {}).get(
+                "comments"
+            )
+            if pred
+            else None,
+            "scenario_detail": (pred.feature_snapshot or {}).get("scenarios") if pred else None,
+            "tickets": (pred.feature_snapshot or {}).get("tickets") if pred else None,
         },
         "result": {
             "rank1": card.result.rank1_waku if card.result else None,

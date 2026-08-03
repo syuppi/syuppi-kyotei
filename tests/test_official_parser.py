@@ -28,3 +28,8 @@ def test_parse_beforeinfo_exhibition_and_weather():
     assert data["weather"]["wind_speed"] == 2.0
     assert data["exhibition"][1]["exhibition_time"] == 6.6
     assert data["exhibition"][1]["tilt"] == -0.5
+    # スタート展示ST・進入
+    assert data["exhibition"][1]["exhibition_st"] == 0.04
+    assert data["exhibition"][6]["exhibition_st"] == 0.02
+    assert data["exhibition"][1]["estimated_course"] == 1
+    assert data["exhibition"][6]["estimated_course"] == 6

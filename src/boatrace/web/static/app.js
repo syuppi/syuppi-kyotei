@@ -109,6 +109,40 @@ function renderPredictions(data) {
         <ol class="ticket-list">${rows.map(fmtTicket).join("") || "<li>候補なし</li>"}</ol>
       </div>`;
 
+    const ex = item.exhibition || {};
+    const exEntries = ex.entries || [];
+    const exPhase = ex.phase || (ex.complete ? "試走反映済" : "試走前");
+    const exTable = exEntries.length ? `
+      <div class="ex-wrap">
+        <div class="ticket-title">試走・展示 <span class="badge">${exPhase}</span></div>
+        <table class="ex-table">
+          <thead><tr><th>枠</th><th>進入</th><th>展示</th><th>ST展示</th><th>チルト</th><th>調整重量</th></tr></thead>
+          <tbody>
+            ${exEntries.map((e) => {
+              const bestT = Number(e.waku) === Number(ex.best_time_waku);
+              const bestS = Number(e.waku) === Number(ex.best_st_waku);
+              return `<tr class="${bestT || bestS ? "best" : ""}">
+                <td>${e.waku}</td>
+                <td>${e.course ?? "-"}</td>
+                <td>${e.exhibition_time != null ? Number(e.exhibition_time).toFixed(2) : "-"}${bestT ? " ★" : ""}</td>
+                <td>${e.exhibition_st != null ? Number(e.exhibition_st).toFixed(2) : "-"}${bestS ? " ★" : ""}</td>
+                <td>${e.tilt != null ? e.tilt : "-"}</td>
+                <td>${e.weight_adjustment != null ? e.weight_adjustment : "-"}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>` : `<div class="meta">試走データ未取得（シナリオコメントを参照）</div>`;
+
+    const scenarioComments = item.scenarios || (item.scenario_detail && item.scenario_detail.comments) || [];
+    const scenarioHtml = scenarioComments.length ? `
+      <div class="scenario-wrap">
+        <div class="ticket-title">試走シナリオ（期待度の変化）</div>
+        <ul class="scenario-list">
+          ${scenarioComments.slice(0, 8).map((c) => `<li>${c}</li>`).join("")}
+        </ul>
+      </div>` : "";
+
     const resultHtml = (() => {
       if (!item.result?.rank1) {
         return `<div class="meta">結果: 未確定（予測のみ）</div>`;
@@ -147,6 +181,8 @@ function renderPredictions(data) {
           ${ticketBlock("3連複 候補", sps)}
           ${ticketBlock("3連単 候補", sts)}
         </div>
+        ${exTable}
+        ${scenarioHtml}
         <div class="reasons"><strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}
           ${item.race_title ? `<div class="meta">番組: ${item.race_title}</div>` : ""}
         </div>

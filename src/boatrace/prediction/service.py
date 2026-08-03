@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session, joinedload
 from boatrace.config import get_settings
 from boatrace.db.models import PredictHistory, RaceCard
 from boatrace.features.builder import FeatureBuilder
+from boatrace.features.exhibition import exhibition_status
 from boatrace.logging_setup import get_logger
 from boatrace.models.base import BasePredictor, PredictionResult
 from boatrace.models.ml_model import MLPredictor
 from boatrace.models.scoring import ScoringPredictor
+from boatrace.prediction.scenarios import build_exhibition_scenarios
 
 logger = get_logger(__name__)
 
@@ -38,6 +40,40 @@ class PredictionService:
     def predict_race(self, race_card_id: int, persist: bool = True) -> PredictionResult:
         features = self.builder.build(race_card_id)
         result = self.predictor.predict(features)
+        # 試走シナリオ（予測本体とは分離して再計算）
+        try:
+            weights = None
+            if isinstance(self.predictor, MLPredictor) and getattr(
+                self.predictor, "fallback", None
+            ):
+                weights = self.predictor.fallback.weights
+            elif isinstance(self.predictor, ScoringPredictor):
+                weights = self.predictor.weights
+            scenario_predictor = ScoringPredictor(session=self.session, weights=weights)
+            exhibition = build_exhibition_scenarios(
+                scenario_predictor,
+                features,
+                baseline_win_probs=result.win_probs,
+            )
+            result.feature_snapshot = dict(result.feature_snapshot or {})
+            result.feature_snapshot["exhibition"] = exhibition["status"]
+            result.feature_snapshot["scenarios"] = exhibition
+            # 理由の先頭に試走コメントを足す
+            status_line = exhibition["status"].get("phase", "")
+            extra = exhibition.get("status_comments") or []
+            top_sc = [s["comment"] for s in exhibition.get("scenarios", [])[:3]]
+            for waku, msgs in result.reasons.items():
+                prefixed = []
+                if status_line:
+                    prefixed.append(f"試走状況: {status_line}")
+                prefixed.extend(extra[:1])
+                prefixed.extend(top_sc[:2])
+                result.reasons[waku] = prefixed + list(msgs)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("scenario_build_failed", race_card_id=race_card_id, error=str(e))
+            result.feature_snapshot = dict(result.feature_snapshot or {})
+            result.feature_snapshot["exhibition"] = exhibition_status(features)
+
         if persist:
             self._save(race_card_id, result)
         return result
@@ -135,4 +171,8 @@ class PredictionService:
             "sanrenpuku": [t["combo"] for t in tickets.get("sanrenpuku", [])]
             or snap.get("sanrenpuku")
             or [sorted(result.candidates_trio[:3])],
+            "exhibition": snap.get("exhibition"),
+            "scenarios": (snap.get("scenarios") or {}).get("comments")
+            or [],
+            "scenario_detail": snap.get("scenarios"),
         }

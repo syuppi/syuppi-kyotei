@@ -301,6 +301,27 @@ class OfficialCollector(BaseCollector):
                     ex["parts_changed"] = cell
             exhibition[waku] = ex
 
+        # スタート展示（艇番・ST・並び＝進入コース）
+        start_blocks = soup.select(".table1_boatImage1")
+        for course_idx, block in enumerate(start_blocks, start=1):
+            num_el = block.select_one(".table1_boatImage1Number")
+            time_el = block.select_one(".table1_boatImage1Time")
+            if not num_el:
+                continue
+            waku = _to_int(num_el.get_text(strip=True))
+            if not waku or not (1 <= waku <= 6):
+                continue
+            ex = exhibition.setdefault(waku, {"waku": waku})
+            if 1 <= course_idx <= 6:
+                ex["estimated_course"] = course_idx
+            if time_el:
+                raw = _norm(time_el.get_text(strip=True))
+                if raw.startswith("."):
+                    raw = "0" + raw
+                st = _to_float(raw)
+                if st is not None:
+                    ex["exhibition_st"] = st
+
         return {"exhibition": exhibition, "weather": weather}
 
     def _parse_result(self, html: str) -> dict[str, Any] | None:
