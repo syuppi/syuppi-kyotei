@@ -180,11 +180,12 @@ async function bootAccuracy() {
       <td>${pct(r.win_rate)}</td>
       <td>${pct(r.quinella_rate)}</td>
       <td>${pct(r.trio_rate)}</td>
+      <td>${pct(r.trifecta_rate || 0)}</td>
     </tr>`).join("");
   document.getElementById("acc-table").innerHTML = `
     <table>
-      <thead><tr><th>日付</th><th>条件帯</th><th>N</th><th>1着</th><th>2連対</th><th>3連対</th></tr></thead>
-      <tbody>${rows || "<tr><td colspan=6>集計なし</td></tr>"}</tbody>
+      <thead><tr><th>日付</th><th>条件帯</th><th>N</th><th>1着</th><th>2連対</th><th>3連複</th><th>3連単</th></tr></thead>
+      <tbody>${rows || "<tr><td colspan=7>集計なし</td></tr>"}</tbody>
     </table>
   `;
 }
