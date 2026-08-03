@@ -267,6 +267,10 @@ def train_lgbm(
     valid_m = _race_hit_rate_multi(
         valid_samples, win_model, top2_model, top3_model, ranker
     )
+    # データ増分のみ（ランカー無し）との差分を同一holdoutで計測
+    valid_no_ranker = _race_hit_rate_multi(
+        valid_samples, win_model, top2_model, top3_model, None
+    )
 
     payload = {
         "model": win_model,
@@ -280,7 +284,11 @@ def train_lgbm(
         "trained_at": date.today().isoformat(),
         "train_meta": train_meta,
         "valid_meta": valid_meta,
-        "metrics": {"train": train_m, "valid": valid_m},
+        "metrics": {
+            "train": train_m,
+            "valid": valid_m,
+            "valid_no_ranker": valid_no_ranker,
+        },
         "feature_importance": importance,
         "version": "rank_v3",
     }
@@ -292,6 +300,7 @@ def train_lgbm(
         metrics={
             "train": train_m,
             "valid": valid_m,
+            "valid_no_ranker": valid_no_ranker,
             "train_meta": train_meta,
             "valid_meta": valid_meta,
         },
@@ -349,6 +358,7 @@ def retrain_all_before_today(
     path = model_path or DEFAULT_MODEL_PATH
     metrics = {
         "holdout_valid": first.metrics.get("valid"),
+        "holdout_valid_no_ranker": first.metrics.get("valid_no_ranker"),
         "final_train_race_hit": _race_hit_rate_multi(
             train_s, win_model, top2_model, top3_model, ranker
         ),
