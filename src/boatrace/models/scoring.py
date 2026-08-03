@@ -38,9 +38,14 @@ class ScoringPredictor(BasePredictor):
 
     def _load_weights(self, session: Session) -> dict[str, float]:
         rows = session.query(ModelWeights).filter_by(model_name=self.name).all()
-        if not rows:
-            return dict(DEFAULT_WEIGHTS)
-        return {r.feature_key: r.weight for r in rows}
+        weights = dict(DEFAULT_WEIGHTS)
+        if rows:
+            for r in rows:
+                weights[r.feature_key] = r.weight
+            # 新規特徴キーがDBに無い場合はデフォルトを残す
+            for k, v in DEFAULT_WEIGHTS.items():
+                weights.setdefault(k, v)
+        return weights
 
     def predict(self, features: RaceFeatures) -> PredictionResult:
         scores: dict[int, float] = {}
@@ -132,13 +137,16 @@ class ScoringPredictor(BasePredictor):
             "venue_course_win_rate": "この場のコース別1着率が高い",
             "local_win_rate": "当地1着率が高い",
             "exhibition_advantage": "展示タイムが上位",
+            "exhibition_st_advantage": "スタート展示が速い",
             "motor_quinella_rate": "モーター2連対率が高い",
             "national_win_rate": "全国勝率が高い",
+            "grade_strength": "級別が上位",
             "recent_form": "直近成績が良い",
             "boat_quinella_rate": "ボート2連対率が高い",
             "st_advantage": "平均STが優位",
             "tide_adjustment": "潮位条件がこのコースに有利",
             "wind_course_bias": "風向・風速がこのコースに有利",
+            "same_day_course_form": "当日同場の流れがこのコースに合う",
         }
         neg_label = {
             "tide_adjustment": "満潮付近でインの信頼度が低下",
@@ -165,6 +173,15 @@ class ScoringPredictor(BasePredictor):
 
             if boat.raw.get("exhibition_time") is not None:
                 msgs.append(f"展示タイム {boat.raw['exhibition_time']:.2f}")
+            if boat.raw.get("exhibition_st") is not None:
+                msgs.append(f"スタート展示 {boat.raw['exhibition_st']:.2f}")
+            if boat.raw.get("grade_code"):
+                msgs.append(f"級別 {boat.raw['grade_code']}")
+            if env.get("same_day_prev_count"):
+                msgs.append(
+                    f"当日前R {env['same_day_prev_count']}走・イン勝率"
+                    f"{float(env.get('same_day_in_win_rate') or 0)*100:.0f}%"
+                )
 
             msgs.append(f"1着確率 {win_probs[boat.waku]*100:.1f}%")
             reasons[boat.waku] = msgs

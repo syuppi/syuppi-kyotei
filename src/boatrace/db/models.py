@@ -72,6 +72,9 @@ class RaceCard(Base):
     race_no: Mapped[int] = mapped_column(Integer, nullable=False)
     race_title: Mapped[str] = mapped_column(String(128), default="")
     race_grade: Mapped[str] = mapped_column(String(32), default="")
+    grade_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    day_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    distance_m: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     deadline_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_fixed_entry: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(16), default="scheduled")  # scheduled/finished
@@ -127,9 +130,16 @@ class RaceEntry(Base):
     previous_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     previous_st: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     exhibition_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    exhibition_st: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # スタート展示ST
     tilt: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    weight_adjustment: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     parts_changed: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    parts_changed_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     estimated_course: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    motor_trio_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    boat_trio_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    grade_code: Mapped[Optional[str]] = mapped_column(String(4), nullable=True)  # A1/A2/B1/B2
+    win_odds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 単勝オッズ
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

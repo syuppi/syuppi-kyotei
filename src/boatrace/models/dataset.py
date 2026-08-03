@@ -17,22 +17,40 @@ logger = get_logger(__name__)
 
 BASE_FEATURES = list(DEFAULT_WEIGHTS.keys())
 
-# ML用に追加する特徴
+# ML用に追加する特徴（プロ予想士が確認する項目を含む）
 EXTRA_FEATURES = [
     "waku",
     "exhibition_time_raw",
+    "exhibition_st_raw",
     "avg_st_raw",
     "local_win_raw",
     "national_win_raw",
     "motor_q_raw",
+    "motor_trio_raw",
     "boat_q_raw",
+    "boat_trio_raw",
+    "grade_score",
+    "f_count",
+    "l_count",
+    "tilt_raw",
+    "weight_adjustment",
+    "parts_changed_flag",
+    "win_odds_inv",
     "wind_speed",
     "wave_height",
     "tide_level_norm",
     "near_high_tide",
     "tide_sensitive",
     "is_fixed_entry",
+    "day_number",
+    "grade_number",
+    "same_day_prev_count",
+    "same_day_in_win_rate",
+    "same_day_nige_rate",
+    "same_day_last_winner_course",
+    "same_day_wind_delta",
     "ex_rank",
+    "ex_st_rank",
     "local_rank",
     "motor_rank",
 ]
@@ -74,26 +92,55 @@ def _rank_asc(values: list[float | None]) -> list[float]:
     return out
 
 
+def _grade_to_score(grade: str | None) -> float:
+    from boatrace.features.builder import GRADE_SCORE
+
+    if not grade:
+        return 0.45
+    return GRADE_SCORE.get(str(grade).upper(), 0.45)
+
+
 def boat_feature_vector(features, boat_idx: int, ranks: dict[str, list[float]]) -> list[float]:
     boat = features.boats[boat_idx]
     env = features.env
     vec = [float(boat.values.get(k, 0.5)) for k in BASE_FEATURES]
     raw = boat.raw
+    win_odds = raw.get("win_odds")
+    # 単勝オッズは逆数（人気度）。未取得時は中立
+    win_odds_inv = (1.0 / float(win_odds)) if win_odds and float(win_odds) > 0 else 0.15
     extra = {
         "waku": float(boat.waku),
         "exhibition_time_raw": float(raw.get("exhibition_time") or 6.9),
+        "exhibition_st_raw": float(raw.get("exhibition_st") if raw.get("exhibition_st") is not None else 0.18),
         "avg_st_raw": float(raw.get("avg_st") or 0.18),
         "local_win_raw": float(raw.get("local_win_rate") or 5.0),
         "national_win_raw": float(raw.get("national_win_rate") or 5.0),
         "motor_q_raw": float(raw.get("motor_quinella_rate") or 30.0),
+        "motor_trio_raw": float(raw.get("motor_trio_rate") or 45.0),
         "boat_q_raw": float(raw.get("boat_quinella_rate") or 30.0),
+        "boat_trio_raw": float(raw.get("boat_trio_rate") or 45.0),
+        "grade_score": _grade_to_score(raw.get("grade_code")),
+        "f_count": float(raw.get("f_count") or 0),
+        "l_count": float(raw.get("l_count") or 0),
+        "tilt_raw": float(raw.get("tilt") if raw.get("tilt") is not None else 0.0),
+        "weight_adjustment": float(raw.get("weight_adjustment") or 0.0),
+        "parts_changed_flag": 1.0 if raw.get("parts_changed_flag") else 0.0,
+        "win_odds_inv": float(win_odds_inv),
         "wind_speed": float(env.get("wind_speed") or 0.0),
         "wave_height": float(env.get("wave_height") or 0.0),
         "tide_level_norm": float(env.get("tide_level_cm") or 100.0) / 200.0,
         "near_high_tide": 1.0 if env.get("near_high_tide") else 0.0,
         "tide_sensitive": 1.0 if env.get("tide_sensitive") else 0.0,
         "is_fixed_entry": 1.0 if env.get("is_fixed_entry") else 0.0,
+        "day_number": float(env.get("day_number") or 0),
+        "grade_number": float(env.get("grade_number") or 0),
+        "same_day_prev_count": float(env.get("same_day_prev_count") or 0),
+        "same_day_in_win_rate": float(env.get("same_day_in_win_rate") or 0.55),
+        "same_day_nige_rate": float(env.get("same_day_nige_rate") or 0.5),
+        "same_day_last_winner_course": float(env.get("same_day_last_winner_course") or 0),
+        "same_day_wind_delta": float(env.get("same_day_wind_delta") or 0.0),
         "ex_rank": ranks["ex"][boat_idx],
+        "ex_st_rank": ranks["ex_st"][boat_idx],
         "local_rank": ranks["local"][boat_idx],
         "motor_rank": ranks["motor"][boat_idx],
     }
@@ -118,6 +165,7 @@ def build_race_sample(session: Session, card: RaceCard) -> RaceSample | None:
     boats = feats.boats
     ranks = {
         "ex": _rank_asc([b.raw.get("exhibition_time") for b in boats]),
+        "ex_st": _rank_asc([b.raw.get("exhibition_st") for b in boats]),
         "local": _rank_desc([b.raw.get("local_win_rate") for b in boats]),
         "motor": _rank_desc([b.raw.get("motor_quinella_rate") for b in boats]),
     }

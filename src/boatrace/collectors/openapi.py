@@ -137,6 +137,12 @@ class OpenApiCollector(BaseCollector):
             ).strip()
             card.race_title = title or card.race_title
             card.race_grade = str(race.get("grade_number_source") or card.race_grade or "")
+            if race.get("grade_number") is not None:
+                card.grade_number = int(race["grade_number"])
+            if race.get("day_number") is not None:
+                card.day_number = int(race["day_number"])
+            if race.get("distance") is not None:
+                card.distance_m = int(race["distance"])
             closed = race.get("closed_at")
             if closed:
                 try:
@@ -149,6 +155,7 @@ class OpenApiCollector(BaseCollector):
                 "source": self.source_name,
                 "has_preview": bool(race.get("preview")),
                 "has_result": bool(race.get("result") and (race["result"] or {}).get("racers")),
+                "has_odds": bool(race.get("odds")),
             }
 
             for _waku, rd in (race.get("racers") or {}).items():
@@ -197,9 +204,22 @@ class OpenApiCollector(BaseCollector):
                 entry.local_trio_rate = rd.get("local_top_3_percent")
                 entry.motor_no = rd.get("motor_number")
                 entry.motor_quinella_rate = rd.get("motor_top_2_percent")
+                entry.motor_trio_rate = rd.get("motor_top_3_percent")
                 entry.boat_no = rd.get("boat_number")
                 entry.boat_quinella_rate = rd.get("boat_top_2_percent")
+                entry.boat_trio_rate = rd.get("boat_top_3_percent")
+                entry.grade_code = grade or entry.grade_code
                 entry.updated_at = now
+
+            # 単勝オッズ（dict {"1":2.0} / list 両対応）
+            for waku, odd_v in self._parse_win_odds(race.get("odds")).items():
+                entry = (
+                    session.query(RaceEntry)
+                    .filter_by(race_card_id=card.id, waku=waku)
+                    .one_or_none()
+                )
+                if entry is not None:
+                    entry.win_odds = odd_v
 
             preview = race.get("preview") or {}
             result = race.get("result") or {}
@@ -250,6 +270,10 @@ class OpenApiCollector(BaseCollector):
                         entry.estimated_course = int(pr["course_number"])
                     if pr.get("weight") is not None:
                         entry.weight = float(pr["weight"])
+                    if pr.get("weight_adjustment") is not None:
+                        entry.weight_adjustment = float(pr["weight_adjustment"])
+                    if pr.get("start_timing") is not None:
+                        entry.exhibition_st = float(pr["start_timing"])
                     entry.updated_at = now
 
             racers_res = (result or {}).get("racers") or {}
@@ -296,3 +320,40 @@ class OpenApiCollector(BaseCollector):
                 card.updated_at = now
 
         return card_n, entry_n, preview_n, result_n
+
+    @staticmethod
+    def _parse_win_odds(odds_payload: object) -> dict[int, float]:
+        """単勝オッズを艇番→オッズに正規化（dict / list 両対応）。"""
+        win_by_boat: dict[int, float] = {}
+        if not isinstance(odds_payload, dict):
+            return win_by_boat
+        win = odds_payload.get("win")
+        if isinstance(win, dict):
+            for k, v in win.items():
+                try:
+                    waku = int(str(k).split("-")[0])
+                    odd_v = float(v)
+                    if waku and odd_v > 0:
+                        win_by_boat[waku] = odd_v
+                except (TypeError, ValueError):
+                    continue
+            return win_by_boat
+        if isinstance(win, list):
+            for item in win:
+                if not isinstance(item, dict):
+                    continue
+                comb = str(item.get("combination") or item.get("key") or item.get("boat_number") or "")
+                try:
+                    waku = int(comb.split("-")[0].split("=")[0])
+                except ValueError:
+                    continue
+                odd_v = item.get("odds") or item.get("value")
+                if odd_v is None:
+                    continue
+                try:
+                    odd_f = float(odd_v)
+                except (TypeError, ValueError):
+                    continue
+                if waku and odd_f > 0:
+                    win_by_boat[waku] = odd_f
+        return win_by_boat

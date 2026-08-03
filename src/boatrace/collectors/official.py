@@ -434,10 +434,14 @@ class OfficialCollector(BaseCollector):
                     "local_trio_rate",
                     "motor_no",
                     "motor_quinella_rate",
+                    "motor_trio_rate",
                     "boat_no",
                     "boat_quinella_rate",
+                    "boat_trio_rate",
                     "exhibition_time",
+                    "exhibition_st",
                     "tilt",
+                    "weight_adjustment",
                     "parts_changed",
                     "previous_rank",
                     "previous_st",
@@ -447,9 +451,18 @@ class OfficialCollector(BaseCollector):
                     "weight",
                     "f_count",
                     "l_count",
+                    "grade_code",
+                    "win_odds",
                 ]:
                     if ed.get(field) is not None:
                         setattr(entry, field, ed[field])
+                if ed.get("grade") and not ed.get("grade_code"):
+                    entry.grade_code = ed["grade"]
+                if ed.get("parts_changed"):
+                    entry.parts_changed_flag = True
+                    entry.parts_changed = ed["parts_changed"]
+                elif ed.get("parts_changed_flag") is not None:
+                    entry.parts_changed_flag = bool(ed["parts_changed_flag"])
                 entry.updated_at = now
 
             weather = data.get("weather")

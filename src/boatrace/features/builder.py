@@ -9,21 +9,26 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session, joinedload
 
 from boatrace.config import get_settings, get_venue_map
-from boatrace.db.models import RaceCard, VenueBias, VenueCourseStats
+from boatrace.db.models import RaceCard, RaceEntry, RaceResult, VenueBias, VenueCourseStats
 
 
 DEFAULT_WEIGHTS: dict[str, float] = {
-    "venue_course_win_rate": 0.22,
-    "local_win_rate": 0.14,
-    "exhibition_advantage": 0.14,
-    "motor_quinella_rate": 0.10,
-    "national_win_rate": 0.08,
-    "recent_form": 0.08,
-    "boat_quinella_rate": 0.06,
-    "st_advantage": 0.06,
-    "tide_adjustment": 0.06,
-    "wind_course_bias": 0.06,
+    "venue_course_win_rate": 0.18,
+    "local_win_rate": 0.12,
+    "exhibition_advantage": 0.12,
+    "exhibition_st_advantage": 0.08,
+    "motor_quinella_rate": 0.08,
+    "national_win_rate": 0.07,
+    "grade_strength": 0.06,
+    "recent_form": 0.06,
+    "boat_quinella_rate": 0.05,
+    "st_advantage": 0.05,
+    "tide_adjustment": 0.05,
+    "wind_course_bias": 0.05,
+    "same_day_course_form": 0.03,
 }
+
+GRADE_SCORE = {"A1": 1.0, "A2": 0.72, "B1": 0.40, "B2": 0.18}
 
 
 @dataclass
@@ -86,7 +91,7 @@ class FeatureBuilder:
         card = (
             self.session.query(RaceCard)
             .options(
-                joinedload(RaceCard.entries),
+                joinedload(RaceCard.entries).joinedload(RaceEntry.racer),
                 joinedload(RaceCard.weather),
                 joinedload(RaceCard.tide),
                 joinedload(RaceCard.venue),
@@ -113,6 +118,10 @@ class FeatureBuilder:
         if wave is not None and wave >= 5:
             condition_keys.append("wave_ge5")
 
+        same_day = self._same_day_previous_features(
+            card.venue_id, card.race_date, card.race_no
+        )
+
         env = {
             "wind_speed": wind_spd,
             "wind_direction": wind_dir,
@@ -130,6 +139,10 @@ class FeatureBuilder:
             "typical_in_advantage": (
                 venue_cfg.typical_in_advantage if venue_cfg else 0.52
             ),
+            "grade_number": card.grade_number,
+            "day_number": card.day_number,
+            "distance_m": card.distance_m,
+            **same_day,
         }
 
         # リーク防止: 当該レース日より前の結果だけから場コース傾向を作る
@@ -138,11 +151,13 @@ class FeatureBuilder:
         )
         biases = self._load_biases(card.venue_id)
 
-        # 展示・ST の相対評価用
+        # 展示・ST・展示ST の相対評価用
         times = [e.exhibition_time for e in card.entries if e.exhibition_time]
         best_time = min(times) if times else None
         sts = [e.avg_st for e in card.entries if e.avg_st is not None]
         best_st = min(sts) if sts else None
+        ex_sts = [e.exhibition_st for e in card.entries if e.exhibition_st is not None]
+        best_ex_st = min(ex_sts) if ex_sts else None
 
         boats: list[BoatFeatures] = []
         for entry in sorted(card.entries, key=lambda x: x.waku):
@@ -182,13 +197,27 @@ class FeatureBuilder:
                 gap = entry.exhibition_time - best_time
                 values["exhibition_advantage"] = max(0.0, 1.0 - gap / 0.15)
 
-            # ST優位（小さいほど高い）
+            # 平均ST優位（小さいほど高い）
             if entry.avg_st is None or best_st is None:
                 values["st_advantage"] = 0.5
                 missing.append("st_advantage")
             else:
                 gap = entry.avg_st - best_st
                 values["st_advantage"] = max(0.0, 1.0 - gap / 0.10)
+
+            # スタート展示ST優位（プロが最重視しやすい）
+            if entry.exhibition_st is None or best_ex_st is None:
+                values["exhibition_st_advantage"] = 0.5
+                missing.append("exhibition_st_advantage")
+            else:
+                gap = entry.exhibition_st - best_ex_st
+                values["exhibition_st_advantage"] = max(0.0, 1.0 - gap / 0.12)
+
+            # 級別
+            grade = (entry.grade_code or (entry.racer.grade if entry.racer else "") or "").upper()
+            if grade not in GRADE_SCORE:
+                missing.append("grade_strength")
+            values["grade_strength"] = GRADE_SCORE.get(grade, 0.45)
 
             # 直近フォーム（前走着順を簡易利用）
             if entry.previous_rank is None:
@@ -226,6 +255,20 @@ class FeatureBuilder:
                 wind_bias = 0.5 * wind_bias + 0.5 * in_adv
             values["wind_course_bias"] = wind_bias
 
+            # 当日同場の前レース傾向（インが連勝中ならイン寄り、崩れ中ならアウト寄り）
+            in_rate = float(env.get("same_day_in_win_rate") or 0.55)
+            n_prev = int(env.get("same_day_prev_count") or 0)
+            if n_prev <= 0:
+                values["same_day_course_form"] = 0.5
+            else:
+                # 当日イン勝率が高いほどコース1を加点、低いほどアウトを加点
+                if course == 1:
+                    values["same_day_course_form"] = 0.35 + 0.5 * in_rate
+                elif course >= 4:
+                    values["same_day_course_form"] = 0.75 - 0.45 * in_rate
+                else:
+                    values["same_day_course_form"] = 0.5
+
             # 場別補正係数を特徴に乗算（学習済み）
             for key in list(values.keys()):
                 coef = biases.get(key, 1.0)
@@ -238,13 +281,25 @@ class FeatureBuilder:
                     values=values,
                     raw={
                         "exhibition_time": entry.exhibition_time,
+                        "exhibition_st": entry.exhibition_st,
                         "avg_st": entry.avg_st,
                         "local_win_rate": entry.local_win_rate,
                         "national_win_rate": entry.national_win_rate,
                         "motor_quinella_rate": entry.motor_quinella_rate,
+                        "motor_trio_rate": entry.motor_trio_rate,
                         "boat_quinella_rate": entry.boat_quinella_rate,
+                        "boat_trio_rate": entry.boat_trio_rate,
                         "course": course,
                         "previous_rank": entry.previous_rank,
+                        "grade_code": grade,
+                        "f_count": entry.f_count,
+                        "l_count": entry.l_count,
+                        "tilt": entry.tilt,
+                        "weight_adjustment": entry.weight_adjustment,
+                        "parts_changed_flag": bool(entry.parts_changed_flag),
+                        "win_odds": entry.win_odds,
+                        "weight": entry.weight,
+                        "age": entry.age,
                     },
                     missing=missing,
                 )
@@ -258,6 +313,73 @@ class FeatureBuilder:
             env=env,
             condition_keys=condition_keys,
         )
+
+    def _same_day_previous_features(
+        self, venue_id: str, race_date: date, race_no: int
+    ) -> dict[str, Any]:
+        """当日同場・当該Rより前の確定結果からプロ視点の流れを作る."""
+        rows = (
+            self.session.query(RaceCard, RaceResult)
+            .join(RaceResult, RaceResult.race_card_id == RaceCard.id)
+            .options(joinedload(RaceCard.weather))
+            .filter(
+                RaceCard.venue_id == venue_id,
+                RaceCard.race_date == race_date,
+                RaceCard.race_no < race_no,
+                RaceCard.status == "finished",
+            )
+            .order_by(RaceCard.race_no)
+            .all()
+        )
+        if not rows:
+            return {
+                "same_day_prev_count": 0,
+                "same_day_in_win_rate": 0.55,
+                "same_day_nige_rate": 0.5,
+                "same_day_last_winner_course": 0,
+                "same_day_last_kimarite": None,
+                "same_day_wind_delta": 0.0,
+                "same_day_avg_wind": 0.0,
+            }
+
+        in_wins = 0
+        nige = 0
+        winds: list[float] = []
+        last_course = 0
+        last_kimarite = None
+        for card, result in rows:
+            entries = result.entry_results or []
+            winner_course = None
+            for er in entries:
+                if int(er.get("rank") or 0) == 1:
+                    winner_course = int(er.get("course") or er.get("waku") or 0)
+                    break
+            if winner_course is None and result.rank1_waku:
+                winner_course = int(result.rank1_waku)
+            if winner_course == 1:
+                in_wins += 1
+            if winner_course:
+                last_course = winner_course
+            kim = result.kimarite or ""
+            if "逃" in kim:
+                nige += 1
+            last_kimarite = kim or last_kimarite
+            if card.weather and card.weather.wind_speed is not None:
+                winds.append(float(card.weather.wind_speed))
+
+        n = len(rows)
+        wind_delta = 0.0
+        if len(winds) >= 2:
+            wind_delta = winds[-1] - winds[0]
+        return {
+            "same_day_prev_count": n,
+            "same_day_in_win_rate": in_wins / n,
+            "same_day_nige_rate": nige / n,
+            "same_day_last_winner_course": last_course,
+            "same_day_last_kimarite": last_kimarite,
+            "same_day_wind_delta": wind_delta,
+            "same_day_avg_wind": (sum(winds) / len(winds)) if winds else 0.0,
+        }
 
     def _load_course_stats(
         self,
@@ -299,8 +421,6 @@ class FeatureBuilder:
     def _course_stats_from_history(
         self, venue_id: str, as_of_date: date | None
     ) -> dict[int, dict[str, float]]:
-        from boatrace.db.models import RaceResult
-
         q = (
             self.session.query(RaceCard, RaceResult)
             .join(RaceResult, RaceResult.race_card_id == RaceCard.id)

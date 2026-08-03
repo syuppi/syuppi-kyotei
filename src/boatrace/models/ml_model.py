@@ -39,6 +39,7 @@ def _intra_ranks(features: RaceFeatures) -> dict[str, list[float]]:
 
     return {
         "ex": rank_asc([b.raw.get("exhibition_time") for b in boats]),
+        "ex_st": rank_asc([b.raw.get("exhibition_st") for b in boats]),
         "local": rank_desc([b.raw.get("local_win_rate") for b in boats]),
         "motor": rank_desc([b.raw.get("motor_quinella_rate") for b in boats]),
     }

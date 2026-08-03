@@ -367,12 +367,22 @@ class LearningService:
 
     def _ensure_weights(self, model_name: str) -> dict[str, float]:
         rows = self.session.query(ModelWeights).filter_by(model_name=model_name).all()
+        weights = dict(DEFAULT_WEIGHTS)
         if not rows:
             for k, v in DEFAULT_WEIGHTS.items():
                 self.session.add(ModelWeights(model_name=model_name, feature_key=k, weight=v))
             self.session.flush()
-            return dict(DEFAULT_WEIGHTS)
-        return {r.feature_key: r.weight for r in rows}
+            return weights
+        for r in rows:
+            weights[r.feature_key] = r.weight
+        # 新規キーをDBへ補完
+        existing = {r.feature_key for r in rows}
+        for k, v in DEFAULT_WEIGHTS.items():
+            if k not in existing:
+                self.session.add(ModelWeights(model_name=model_name, feature_key=k, weight=v))
+                weights[k] = v
+        self.session.flush()
+        return weights
 
     def _save_weights(self, model_name: str, weights: dict[str, float]) -> None:
         for k, v in weights.items():
