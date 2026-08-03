@@ -1,4 +1,4 @@
-"""機械学習モデル（LightGBM: 1着/2連対/3連対 + 組み合わせ）."""
+"""機械学習モデル（LightGBM: 1着/連対/ランカー + 組み合わせ）."""
 
 from __future__ import annotations
 
@@ -67,6 +67,8 @@ class MLPredictor(BasePredictor):
         self.win_model: Any | None = None
         self.top2_model: Any | None = None
         self.top3_model: Any | None = None
+        self.ranker: Any | None = None
+        self.session = session
         self.feature_columns = FEATURE_COLUMNS
         self.importance: dict[str, float] = {}
         self.fallback = ScoringPredictor(session=session)
@@ -90,10 +92,13 @@ class MLPredictor(BasePredictor):
                 self.win_model = models.get("win") or payload["model"]
                 self.top2_model = models.get("top2")
                 self.top3_model = models.get("top3")
+                self.ranker = models.get("ranker")
                 self.feature_columns = payload.get("feature_columns", FEATURE_COLUMNS)
                 self.importance = payload.get("feature_importance") or {}
                 self.version = payload.get("version") or (
-                    "place_v2" if self.top3_model is not None else "win_only"
+                    "rank_v3"
+                    if self.ranker is not None
+                    else ("place_v2" if self.top3_model is not None else "win_only")
                 )
             else:
                 self.win_model = payload
@@ -101,10 +106,24 @@ class MLPredictor(BasePredictor):
             self.win_model = None
             self.top2_model = None
             self.top3_model = None
+            self.ranker = None
 
     @property
     def model(self) -> Any | None:
         return self.win_model
+
+    def _venue_prior(self, features: RaceFeatures):
+        if self.session is None:
+            return None
+        try:
+            from boatrace.db.models import RaceCard
+            from boatrace.models.venue_cooccur import build_venue_trio_prior
+
+            card = self.session.get(RaceCard, features.race_card_id)
+            as_of = card.race_date if card else None
+            return build_venue_trio_prior(self.session, features.venue_id, as_of)
+        except Exception:
+            return None
 
     def predict(self, features: RaceFeatures) -> PredictionResult:
         scored = self.fallback.predict(features)
@@ -136,9 +155,9 @@ class MLPredictor(BasePredictor):
 
         top2_probs = None
         top3_probs = None
+        rank_scores = None
         if self.top2_model is not None:
             r2 = _pos_proba(self.top2_model, X)
-            # ルール側 quinella とブレンド
             top2_probs = {
                 w: 0.8 * float(r2[i]) + 0.2 * float(scored.quinella_probs.get(w, 0.3))
                 for i, w in enumerate(wakus)
@@ -149,12 +168,20 @@ class MLPredictor(BasePredictor):
                 w: 0.8 * float(r3[i]) + 0.2 * float(scored.trio_probs.get(w, 0.4))
                 for i, w in enumerate(wakus)
             }
+        if self.ranker is not None:
+            rs = np.asarray(self.ranker.predict(X), dtype=float)
+            rs = rs - rs.max()
+            rs = np.exp(rs)
+            rank_scores = {w: float(rs[i]) for i, w in enumerate(wakus)}
 
         cfg = get_settings().prediction
+        venue_prior = self._venue_prior(features)
         bundle = build_combination_bundle(
             win_probs,
             top2_probs,
             top3_probs,
+            venue_prior=venue_prior,
+            rank_scores=rank_scores,
             n_win=cfg.win_candidates,
             n_sanrenpuku=cfg.sanrenpuku_candidates,
             n_sanrentan=cfg.sanrentan_candidates,
@@ -167,12 +194,8 @@ class MLPredictor(BasePredictor):
         top_imp = list(self.importance.items())[:3]
         reasons: dict[int, list[str]] = {}
         win_labels = [t["label"] for t in tickets.get("win", [])]
-        best_tf = tickets.get("sanrentan", [{}])[0].get("label") or (
-            "-".join(map(str, bundle["sanrentan"][0])) if bundle["sanrentan"] else ""
-        )
-        best_tr = tickets.get("sanrenpuku", [{}])[0].get("label") or (
-            "-".join(map(str, bundle["sanrenpuku"][0])) if bundle["sanrenpuku"] else ""
-        )
+        best_tf = tickets.get("sanrentan", [{}])[0].get("label") or ""
+        best_tr = tickets.get("sanrenpuku", [{}])[0].get("label") or ""
         for boat in features.boats:
             msgs = [
                 f"LightGBM勝率 {ml_map[boat.waku]*100:.1f}%",
@@ -188,13 +211,17 @@ class MLPredictor(BasePredictor):
                 msgs.append(f"本命3連複 {best_tr}")
             if best_tf:
                 msgs.append(f"本命3連単 {best_tf}")
+            if bundle.get("low_confidence"):
+                msgs.append("3連単は低信頼（広め候補推奨）")
             for name, _imp in top_imp:
                 if name in boat.values:
                     msgs.append(f"重要特徴 {name}={boat.values[name]:.3f}")
             msgs.extend(scored.reasons.get(boat.waku, [])[:1])
             reasons[boat.waku] = msgs
 
-        margin = win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
+        margin = (
+            win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
+        )
         has_upset = margin < get_settings().prediction.upset_margin_threshold
         upset = [w for w in rankings[1:4] if w >= 4] if has_upset else []
 
@@ -207,6 +234,9 @@ class MLPredictor(BasePredictor):
         snap["sanrentan_probs"] = bundle["sanrentan_probs"]
         snap["sanrenpuku_probs"] = bundle["sanrenpuku_probs"]
         snap["tickets"] = tickets
+        snap["low_confidence"] = bundle.get("low_confidence")
+        snap["top_trifecta_prob"] = bundle.get("top_trifecta_prob")
+        snap["has_venue_prior"] = bool(venue_prior)
 
         return PredictionResult(
             model_name=self.name,
@@ -218,7 +248,7 @@ class MLPredictor(BasePredictor):
             candidates_quinella=bundle["candidates_quinella"],
             candidates_trio=bundle["candidates_trio"],
             upset_candidates=upset,
-            has_upset=has_upset,
+            has_upset=has_upset or bool(bundle.get("low_confidence")),
             reasons=reasons,
             scores={w: float(v) for w, v in zip(wakus, win_raw)},
             feature_snapshot=snap,

@@ -60,8 +60,8 @@ def main() -> None:
     today = date.today()
 
     with session_scope() as session:
-        print("=== train LightGBM (win/top2/top3 + combinations) ===")
-        result = retrain_all_before_today(session, days=90)
+        print("=== train LightGBM (2026全期間 + ranker/条件付き着順) ===")
+        result = retrain_all_before_today(session, start=date(2026, 1, 1))
         print("model:", result.model_path)
         print("metrics:", result.metrics)
         print("top features:", list(result.feature_importance.items())[:10])

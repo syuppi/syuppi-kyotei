@@ -40,5 +40,45 @@ def test_bundle_returns_tickets():
     assert 2 <= len(tickets["sanrentan"]) <= 3
     assert abs(sum(t["stake_share"] for t in tickets["win"]) - 1.0) < 1e-6
     assert tickets["win"][0]["prob"] >= tickets["win"][-1]["prob"]
+    # 多様化: 上位3連単がすべて同一3艇の順列だけにならないことを推奨（強制はしない）
     strengths = blend_place_strengths(win, top3_probs=top3)
     assert abs(sum(strengths.values()) - 1.0) < 1e-6
+
+
+def test_diverse_trifecta_prefers_different_sets():
+    from boatrace.models.combinations import select_diverse_trifectas
+
+    ordered = [
+        ((1, 2, 3), 0.10),
+        ((1, 3, 2), 0.09),
+        ((2, 1, 3), 0.08),
+        ((1, 2, 4), 0.05),
+        ((4, 5, 6), 0.04),
+    ]
+    picked = select_diverse_trifectas(ordered, limit=3)
+    assert picked[0][0] == [1, 2, 3]
+    sets = [frozenset(c) for c, _ in picked]
+    assert frozenset([1, 2, 4]) in sets or frozenset([4, 5, 6]) in sets
+
+
+def test_conditional_chain_sums_to_one():
+    from boatrace.models.combinations import conditional_chain_ordered
+
+    win = {1: 0.4, 2: 0.2, 3: 0.15, 4: 0.1, 5: 0.1, 6: 0.05}
+    s2 = {1: 0.3, 2: 0.25, 3: 0.2, 4: 0.15, 5: 0.05, 6: 0.05}
+    s3 = {1: 0.2, 2: 0.2, 3: 0.2, 4: 0.2, 5: 0.1, 6: 0.1}
+    ordered = conditional_chain_ordered(win, s2, s3)
+    assert len(ordered) == 120
+    assert abs(sum(p for _, p in ordered) - 1.0) < 1e-6
+
+
+def test_venue_prior_rewights_bundle():
+    win = {1: 0.25, 2: 0.2, 3: 0.18, 4: 0.15, 5: 0.12, 6: 0.1}
+    prior = {frozenset([4, 5, 6]): 0.2}
+    without = build_combination_bundle(win)
+    with_prior = build_combination_bundle(win, venue_prior=prior)
+    assert with_prior["tickets"]["sanrentan"]
+    assert without["tickets"]["sanrentan"]
+    # 低確率帯でもフラグが bool
+    assert isinstance(with_prior["low_confidence"], bool)
+
