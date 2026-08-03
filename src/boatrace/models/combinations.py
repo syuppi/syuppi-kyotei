@@ -264,6 +264,7 @@ def build_combination_bundle(
     n_win: int = 3,
     n_sanrenpuku: int = 3,
     n_sanrentan: int = 3,
+    prior_weight: float = 0.08,
 ) -> dict[str, Any]:
     """3連単・3連複の本命と候補をまとめて返す。"""
     top2 = top2_probs or {w: min(0.95, p * 1.6 + 0.05) for w, p in win_probs.items()}
@@ -284,17 +285,22 @@ def build_combination_bundle(
     ordered_cond = conditional_chain_ordered(win_probs, second_strengths, third_strengths)
     ordered = merge_ordered_lists(ordered_cond, ordered_pl, w_primary=0.70)
 
-    # 場共起で3連単を再重み（セット一致）
-    if venue_prior:
+    # 場共起は弱めに混合（強すぎると本命を崩す）
+    pw = max(0.0, min(0.25, float(prior_weight)))
+    if venue_prior and pw > 0:
         reweighted = []
         for ticket, p in ordered:
             key = frozenset(ticket)
             prior = float(venue_prior.get(key, 0.0))
-            reweighted.append((ticket, p * (0.80 + 0.20 * (prior * 20.0 if prior else 0.5))))
+            # prior は頻度分布。無いセットはわずかに減衰
+            boost = 1.0 + pw * ((prior * 15.0) - 0.35) if prior else (1.0 - pw * 0.15)
+            reweighted.append((ticket, p * max(0.5, boost)))
         total = sum(p for _, p in reweighted) or 1.0
         ordered = sorted(((t, p / total) for t, p in reweighted), key=lambda x: -x[1])
 
-    unordered = best_trio_by_coverage(top3, strengths=strengths, venue_prior=venue_prior)
+    unordered = best_trio_by_coverage(
+        top3, strengths=strengths, venue_prior=venue_prior, prior_weight=pw
+    )
     unordered_pl = unordered_trio_probs(ordered)
     merged: dict[frozenset[int], float] = {}
     for key, p in unordered:

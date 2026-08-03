@@ -143,8 +143,12 @@ class MLPredictor(BasePredictor):
 
         wakus = [b.waku for b in features.boats]
         win_raw = _pos_proba(self.win_model, X)
+        # 表示・単勝ブレンド用（softmax）
         ml_probs = softmax(win_raw.tolist(), temperature=0.75)
         ml_map = {w: p for w, p in zip(wakus, ml_probs)}
+        # 3連系は学習時と同じ線形正規化（softmaxだと並び精度が落ちる）
+        raw_sum = float(np.sum(win_raw)) or 1.0
+        combo_win = {w: float(win_raw[i] / raw_sum) for i, w in enumerate(wakus)}
 
         alpha = self.blend
         win_probs = {
@@ -158,16 +162,10 @@ class MLPredictor(BasePredictor):
         rank_scores = None
         if self.top2_model is not None:
             r2 = _pos_proba(self.top2_model, X)
-            top2_probs = {
-                w: 0.8 * float(r2[i]) + 0.2 * float(scored.quinella_probs.get(w, 0.3))
-                for i, w in enumerate(wakus)
-            }
+            top2_probs = {w: float(r2[i]) for i, w in enumerate(wakus)}
         if self.top3_model is not None:
             r3 = _pos_proba(self.top3_model, X)
-            top3_probs = {
-                w: 0.8 * float(r3[i]) + 0.2 * float(scored.trio_probs.get(w, 0.4))
-                for i, w in enumerate(wakus)
-            }
+            top3_probs = {w: float(r3[i]) for i, w in enumerate(wakus)}
         if self.ranker is not None:
             rs = np.asarray(self.ranker.predict(X), dtype=float)
             rs = rs - rs.max()
@@ -177,7 +175,7 @@ class MLPredictor(BasePredictor):
         cfg = get_settings().prediction
         venue_prior = self._venue_prior(features)
         bundle = build_combination_bundle(
-            win_probs,
+            combo_win,
             top2_probs,
             top3_probs,
             venue_prior=venue_prior,
@@ -185,6 +183,7 @@ class MLPredictor(BasePredictor):
             n_win=cfg.win_candidates,
             n_sanrenpuku=cfg.sanrenpuku_candidates,
             n_sanrentan=cfg.sanrentan_candidates,
+            prior_weight=0.05,
         )
         rankings = bundle["rankings"]
         quinella = bundle["top2_probs"]

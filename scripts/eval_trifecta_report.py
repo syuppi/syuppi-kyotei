@@ -84,8 +84,12 @@ def main() -> None:
     today = date.today()
     report: dict = {
         "as_of": today.isoformat(),
+        "data_range": {
+            "min": "2026-01-01",
+            "note": "OpenAPIで取得可能な全期間。2025以前は不可。",
+        },
         "before_reference": {
-            "note": "改善前（約90日学習・本日144R）",
+            "note": "改善前（約90日学習・本日144R・place_v2）",
             "trifecta_top1": 0.076,
             "trifecta_top3": 0.181,
             "win_top1": 0.563,
@@ -93,6 +97,7 @@ def main() -> None:
             "trio_top1": 0.222,
             "trio_top3": 0.521,
         },
+        "model": "rank_v3",
     }
 
     with session_scope() as session:
