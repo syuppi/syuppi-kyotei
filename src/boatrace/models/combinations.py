@@ -272,13 +272,15 @@ def build_combination_bundle(
     top2 = {w: float(max(0.01, min(0.98, v))) for w, v in top2.items()}
     top3 = {w: float(max(0.01, min(0.98, v))) for w, v in top3.items()}
 
-    strengths = blend_place_strengths(win_probs, top2, top3, rank_scores=rank_scores)
-    # 2着強度: top2 と rank を重視 / 3着強度: top3
+    # ランカーは枠リークが残りやすいので弱め
+    strengths = blend_place_strengths(
+        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.50, w_top2=0.22, w_top3=0.18, w_rank=0.10
+    )
     second_strengths = blend_place_strengths(
-        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.15, w_top2=0.45, w_top3=0.15, w_rank=0.25
+        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.20, w_top2=0.50, w_top3=0.20, w_rank=0.10
     )
     third_strengths = blend_place_strengths(
-        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.10, w_top2=0.20, w_top3=0.45, w_rank=0.25
+        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.12, w_top2=0.23, w_top3=0.55, w_rank=0.10
     )
 
     ordered_pl = plackett_luce_ordered(strengths)

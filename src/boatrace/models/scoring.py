@@ -82,11 +82,25 @@ class ScoringPredictor(BasePredictor):
             n_sanrentan=cfg.sanrentan_candidates,
         )
 
-        rankings = bundle["rankings"]
-        candidates_win = bundle["candidates_win"]
+        # 1着はスコア由来の勝率順（3連単の1着固定を避ける）
+        rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
+        candidates_win = rankings[: cfg.win_candidates]
         candidates_quinella = bundle["candidates_quinella"]
         candidates_trio = bundle["candidates_trio"]
         tickets = bundle.get("tickets") or {}
+        if tickets.get("win"):
+            probs = [float(win_probs[w]) for w in candidates_win]
+            psum = sum(probs) or 1.0
+            tickets["win"] = [
+                {
+                    "rank": i + 1,
+                    "combo": [w],
+                    "label": str(w),
+                    "prob": probs[i],
+                    "stake_share": probs[i] / psum,
+                }
+                for i, w in enumerate(candidates_win)
+            ]
 
         margin = win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
         has_upset = margin < self.settings.prediction.upset_margin_threshold

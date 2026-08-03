@@ -62,7 +62,7 @@ class MLPredictor(BasePredictor):
         self,
         model_path: str | Path | None = None,
         session=None,
-        blend_with_scoring: float = 0.20,
+        blend_with_scoring: float = 0.08,
     ):
         self.win_model: Any | None = None
         self.top2_model: Any | None = None
@@ -80,7 +80,7 @@ class MLPredictor(BasePredictor):
 
     @classmethod
     def with_defaults(cls, session=None) -> "MLPredictor":
-        return cls(session=session, blend_with_scoring=0.20)
+        return cls(session=session, blend_with_scoring=0.08)
 
     def _load(self, path: Path) -> None:
         try:
@@ -143,14 +143,15 @@ class MLPredictor(BasePredictor):
 
         wakus = [b.waku for b in features.boats]
         win_raw = _pos_proba(self.win_model, X)
-        # 表示・単勝ブレンド用（softmax）
-        ml_probs = softmax(win_raw.tolist(), temperature=0.75)
+        # 表示用（温度高め＝尖りすぎ防止）
+        ml_probs = softmax(win_raw.tolist(), temperature=1.05)
         ml_map = {w: p for w, p in zip(wakus, ml_probs)}
-        # 3連系は学習時と同じ線形正規化（softmaxだと並び精度が落ちる）
+        # 3連系は学習時と同じ線形正規化
         raw_sum = float(np.sum(win_raw)) or 1.0
         combo_win = {w: float(win_raw[i] / raw_sum) for i, w in enumerate(wakus)}
 
-        alpha = self.blend
+        # ルールベースはコース偏りが強いのでブレンドを極小に
+        alpha = min(self.blend, 0.08)
         win_probs = {
             w: (1 - alpha) * ml_map[w] + alpha * scored.win_probs[w] for w in wakus
         }
@@ -166,6 +167,7 @@ class MLPredictor(BasePredictor):
         if self.top3_model is not None:
             r3 = _pos_proba(self.top3_model, X)
             top3_probs = {w: float(r3[i]) for i, w in enumerate(wakus)}
+        # ランカーは枠リークが残りやすいので3連単には弱くだけ使う
         if self.ranker is not None:
             rs = np.asarray(self.ranker.predict(X), dtype=float)
             rs = rs - rs.max()
@@ -183,12 +185,31 @@ class MLPredictor(BasePredictor):
             n_win=cfg.win_candidates,
             n_sanrenpuku=cfg.sanrenpuku_candidates,
             n_sanrentan=cfg.sanrentan_candidates,
-            prior_weight=0.05,
+            prior_weight=0.03,
         )
-        rankings = bundle["rankings"]
+        # 1着順位は勝率モデルを正とする（3連単本命の1着固定を避ける）
+        rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
         quinella = bundle["top2_probs"]
         trio = bundle["top3_probs"]
         tickets = bundle.get("tickets") or {}
+        # 単勝チケットも勝率順で揃える
+        if tickets.get("win"):
+            win_sorted = rankings[: cfg.win_candidates]
+            probs = [float(win_probs[w]) for w in win_sorted]
+            psum = sum(probs) or 1.0
+            tickets["win"] = [
+                {
+                    "rank": i + 1,
+                    "combo": [w],
+                    "label": str(w),
+                    "prob": probs[i],
+                    "stake_share": probs[i] / psum,
+                    "odds": (tickets["win"][i].get("odds") if i < len(tickets["win"]) else None),
+                    "ev": None,
+                    "value_tag": None,
+                }
+                for i, w in enumerate(win_sorted)
+            ]
 
         top_imp = list(self.importance.items())[:3]
         reasons: dict[int, list[str]] = {}
@@ -243,7 +264,7 @@ class MLPredictor(BasePredictor):
             win_probs=win_probs,
             quinella_probs=quinella,
             trio_probs=trio,
-            candidates_win=bundle["candidates_win"],
+            candidates_win=rankings[: cfg.win_candidates],
             candidates_quinella=bundle["candidates_quinella"],
             candidates_trio=bundle["candidates_trio"],
             upset_candidates=upset,

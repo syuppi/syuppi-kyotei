@@ -158,8 +158,17 @@ class LearningService:
             favorite = str(pred.rankings[0]) if pred.rankings else None
             winner_vals = (boats.get(winner) or {}).get("values") or {}
 
+            # コース系は場バイアス更新から除外（1号艇偏重の増幅を防ぐ）
+            blocked = {
+                "venue_course_win_rate",
+                "tide_adjustment",
+                "wind_course_bias",
+                "same_day_course_form",
+            }
             # 勝者の高い特徴を強化
             for feature_key, val in winner_vals.items():
+                if feature_key in blocked:
+                    continue
                 if val >= 0.55:
                     updates += self._adjust_bias(card.venue_id, feature_key, +lr * 0.5)
 
@@ -167,6 +176,8 @@ class LearningService:
             if favorite and favorite != winner:
                 fav_vals = (boats.get(favorite) or {}).get("values") or {}
                 for feature_key, val in fav_vals.items():
+                    if feature_key in blocked:
+                        continue
                     if val >= 0.7:
                         updates += self._adjust_bias(card.venue_id, feature_key, -lr * 0.3)
 
@@ -188,7 +199,8 @@ class LearningService:
             )
             self.session.add(row)
             self.session.flush()
-        row.coefficient = float(min(1.5, max(0.6, (row.coefficient or 1.0) + delta)))
+        # 補正幅を抑制（以前 1.5 上限でコース特徴が飽和していた）
+        row.coefficient = float(min(1.20, max(0.80, (row.coefficient or 1.0) + delta)))
         row.sample_count = int(row.sample_count or 0) + 1
         row.updated_at = datetime.utcnow()
         return 1
