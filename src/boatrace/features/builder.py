@@ -65,13 +65,14 @@ def wind_bucket(direction: str | None, speed: float | None) -> str:
     if speed is None or speed < 1.0:
         return "calm"
     d = (direction or "").strip()
-    # 公式の風向表記は「追」「向」「横」等
+    # 公式の相対風向
     if "向" in d:
         return "head" if speed >= 3.0 else "head_light"
     if "追" in d:
         return "tail"
     if "横" in d:
         return "cross"
+    # OpenAPI等の方位表記は相対変換できないため other（場別学習で吸収）
     return "other"
 
 

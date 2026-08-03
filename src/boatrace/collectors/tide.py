@@ -110,14 +110,7 @@ class TideCollector(BaseCollector):
         return None
 
     def _try_kaiho(self, race_date: date, venue: VenueConfig) -> dict[str, Any] | None:
-        url = f"{self.kaiho_base}/KANKYO/TIDE/real_time_tide/"
-        try:
-            html = self.fetch_text(url)
-        except CollectorError:
-            return None
-        if not html:
-            return None
-        # 実況ページの構造依存が強いため、ここでは到達時も推定併用
+        # 旧URLは404のため、現状は推定へ委譲（観測点マッピング拡充後に本実装）
         return None
 
     def _estimate_astronomical(self, race_date: date, venue: VenueConfig) -> dict[str, Any]:

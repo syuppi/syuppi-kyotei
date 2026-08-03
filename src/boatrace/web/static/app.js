@@ -101,7 +101,9 @@ function renderPredictions(data) {
           3連対: ${(item.candidates_trio || []).join(",") }
           ${item.upset_candidates?.length ? ` / 穴: ${item.upset_candidates.join(",")}` : ""}
         </div>
-        <div class="reasons"><strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}</div>
+        <div class="reasons"><strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}
+          ${item.race_title ? `<div class="meta">番組: ${item.race_title}</div>` : ""}
+        </div>
       </article>
     `;
   }).join("");

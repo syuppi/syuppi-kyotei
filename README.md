@@ -9,27 +9,20 @@
 - 説明可能なルールベーススコア + ML差し替え可能な設計
 - 予測一覧 / 場傾向 / 精度検証の Web UI
 
-## クイックスタート
+## データ取得
+
+実データは次の順で取得します。
+
+1. **Boatrace Open API**（非公式JSON・全24場・出走/直前/結果）  
+   `https://boatraceopenapi.github.io/api/v1/today.json`
+2. 失敗時は **BOAT RACE公式HTML** へフォールバック
+3. 潮位は JMA到達確認＋天文近似（場別 `tide_sensitive` 設定あり）
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# DB初期化 + デモデータ
-python scripts/init_db.py
-python scripts/seed_demo.py
-
-# 当日データ収集 → 予測 → 結果学習
-python scripts/collect_daily.py
-python scripts/predict_today.py
-python scripts/learn_results.py
-
-# Web / API
-uvicorn boatrace.api.main:app --reload --host 0.0.0.0 --port 8000
+python scripts/collect_real.py   # 実データ収集→予測→学習
 ```
 
-ブラウザで http://localhost:8000 を開いてください。
+各場の公式ホームページは広報・ライブ映像中心で、構造化出走表としては公式ポータル／Open APIの方が安定です。
 
 ## 設計
 
