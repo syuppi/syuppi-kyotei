@@ -135,9 +135,12 @@ def _bundle_from_models(
     top3_model: lgb.LGBMClassifier | None,
     ranker: lgb.LGBMRanker | None,
 ) -> dict[str, Any]:
+    from boatrace.models.course_prior import apply_course_log_prior
+
     win_raw = _predict_pos_proba(win_model, s.X)
     win_sum = float(win_raw.sum()) or 1.0
     win_probs = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
+    win_probs = apply_course_log_prior(win_probs)
     top2_probs = None
     top3_probs = None
     rank_scores = None
@@ -290,7 +293,7 @@ def train_lgbm(
             "valid_no_ranker": valid_no_ranker,
         },
         "feature_importance": importance,
-        "version": "debiase_v5",
+        "version": "debiase_v6",
     }
     joblib.dump(payload, model_path)
     logger.info("model_saved", path=str(model_path), valid=valid_m)
@@ -380,7 +383,7 @@ def retrain_all_before_today(
             "trained_at": date.today().isoformat(),
             "metrics": metrics,
             "feature_importance": importance,
-            "version": "debiase_v5",
+            "version": "debiase_v6",
         },
         path,
     )

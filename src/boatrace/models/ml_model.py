@@ -8,15 +8,14 @@ from typing import Any
 import numpy as np
 
 from boatrace.config import ROOT_DIR, get_settings
-from boatrace.features.builder import GLOBAL_COURSE_WIN_PRIOR, RaceFeatures
+from boatrace.features.builder import RaceFeatures
 from boatrace.models.base import BasePredictor, PredictionResult
 from boatrace.models.combinations import build_combination_bundle
+from boatrace.models.course_prior import COURSE_PRIOR_BETA, apply_course_log_prior
 from boatrace.models.dataset import FEATURE_COLUMNS, boat_feature_vector
 from boatrace.models.scoring import ScoringPredictor, softmax
 
 DEFAULT_MODEL_PATH = ROOT_DIR / "data" / "models" / "lgbm_win_v1.joblib"
-# 選手力モデルに全国コース事前を弱く混ぜる（絶対コース勝率特徴は使わない）
-COURSE_PRIOR_MIX = 0.22
 
 
 def _intra_ranks(features: RaceFeatures) -> dict[str, list[float]]:
@@ -153,28 +152,16 @@ class MLPredictor(BasePredictor):
         combo_win = {w: float(win_raw[i] / raw_sum) for i, w in enumerate(wakus)}
 
         # ルールベースはコース偏りが強いのでブレンドを極小に
-        alpha = min(self.blend, 0.08)
+        alpha = min(self.blend, 0.05)
         win_probs = {
             w: (1 - alpha) * ml_map[w] + alpha * scored.win_probs[w] for w in wakus
         }
         s = sum(win_probs.values()) or 1.0
         win_probs = {w: v / s for w, v in win_probs.items()}
 
-        # 全国コース事前を弱く混合（特徴量リークではなく事後校正）
-        lam = COURSE_PRIOR_MIX
-        if lam > 0:
-
-            def _mix_prior(probs: dict[int, float]) -> dict[int, float]:
-                mixed = {
-                    w: (1.0 - lam) * probs[w]
-                    + lam * float(GLOBAL_COURSE_WIN_PRIOR.get(w, 1.0 / 6.0))
-                    for w in wakus
-                }
-                ss = sum(mixed.values()) or 1.0
-                return {w: v / ss for w, v in mixed.items()}
-
-            win_probs = _mix_prior(win_probs)
-            combo_win = _mix_prior(combo_win)
+        # コースは特徴に入れず、対数事前だけ後付け（本命1号艇偏重を抑制）
+        win_probs = apply_course_log_prior(win_probs, beta=COURSE_PRIOR_BETA)
+        combo_win = apply_course_log_prior(combo_win, beta=COURSE_PRIOR_BETA)
 
         top2_probs = None
         top3_probs = None

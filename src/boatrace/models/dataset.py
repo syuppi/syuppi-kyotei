@@ -15,11 +15,23 @@ from boatrace.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
+# ルールベース用の全キー（コース系を含む）
 BASE_FEATURES = list(DEFAULT_WEIGHTS.keys())
 
-# ML用に追加する特徴（生の枠番 waku / 絶対コース勝率は入れない）
-EXTRA_FEATURES = [
+# MLから除外するコースリーク特徴（絶対/残差どちらも枠を代理しやすい）
+COURSE_LEAK_FEATURES = {
+    "venue_course_win_rate",
+    "tide_adjustment",
+    "wind_course_bias",
+    "same_day_course_form",
     "vcw_resid",
+    "vcw_rel",
+}
+
+# MLは選手・展示・モーター等の実力特徴のみ（コース事前は推論時に別途混合）
+ML_BASE_FEATURES = [k for k in BASE_FEATURES if k not in COURSE_LEAK_FEATURES]
+
+EXTRA_FEATURES = [
     "exhibition_time_raw",
     "exhibition_st_raw",
     "avg_st_raw",
@@ -57,7 +69,7 @@ EXTRA_FEATURES = [
     "motor_rank",
 ]
 
-FEATURE_COLUMNS = BASE_FEATURES + EXTRA_FEATURES
+FEATURE_COLUMNS = ML_BASE_FEATURES + EXTRA_FEATURES
 
 
 @dataclass
@@ -105,20 +117,13 @@ def _grade_to_score(grade: str | None) -> float:
 def boat_feature_vector(features, boat_idx: int, ranks: dict[str, list[float]]) -> list[float]:
     boat = features.boats[boat_idx]
     env = features.env
-    vec = [float(boat.values.get(k, 0.5)) for k in BASE_FEATURES]
+    vec = [float(boat.values.get(k, 0.5)) for k in ML_BASE_FEATURES]
     raw = boat.raw
     win_odds = raw.get("win_odds")
     # 単勝オッズは逆数（人気度）。未取得時は中立
     win_odds_inv = (1.0 / float(win_odds)) if win_odds and float(win_odds) > 0 else 0.15
     extra = {
-        # 場×コース勝率の全国残差（絶対勝率は枠リークになる）
-        "vcw_resid": float(
-            raw.get("vcw_resid")
-            if raw.get("vcw_resid") is not None
-            else ((boat.values.get("venue_course_win_rate", 0.5) - 0.5) * 0.25)
-        ),
-        "exhibition_time_raw": float(raw.get("exhibition_time") or 6.9),
-        "exhibition_st_raw": float(raw.get("exhibition_st") if raw.get("exhibition_st") is not None else 0.18),
+        "exhibition_time_raw": float(raw.get("exhibition_time") or 6.9),        "exhibition_st_raw": float(raw.get("exhibition_st") if raw.get("exhibition_st") is not None else 0.18),
         "avg_st_raw": float(raw.get("avg_st") or 0.18),
         "local_win_raw": float(raw.get("local_win_rate") or 5.0),
         "national_win_raw": float(raw.get("national_win_rate") or 5.0),
