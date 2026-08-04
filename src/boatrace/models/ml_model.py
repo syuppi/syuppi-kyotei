@@ -11,7 +11,7 @@ from boatrace.config import ROOT_DIR, get_settings
 from boatrace.features.builder import RaceFeatures
 from boatrace.models.base import BasePredictor, PredictionResult
 from boatrace.models.combinations import build_combination_bundle
-from boatrace.models.course_prior import COURSE_PRIOR_BETA, apply_course_log_prior
+from boatrace.models.course_prior import COURSE_PRIOR_BETA, apply_course_log_prior, select_favorite_probs
 from boatrace.models.dataset import FEATURE_COLUMNS, boat_feature_vector
 from boatrace.models.scoring import ScoringPredictor, softmax
 
@@ -152,18 +152,16 @@ class MLPredictor(BasePredictor):
         # ルールベースはコース偏りが強いのでブレンドしない（実力信号を維持）
         strength_probs = dict(ml_map)
 
-        # 2段階本命選定: 選手力 → 飛びリスク補正付きコース事前
+        # 2段階本命選定: 選手力 → 補正コース事前 + 非1号艇ゲート
         fly_risk = float(features.env.get("course1_fly_risk") or 0.0)
         venue_in = features.env.get("venue_in_win_rate")
-        win_probs = apply_course_log_prior(
+        win_probs = select_favorite_probs(
             strength_probs,
-            beta=COURSE_PRIOR_BETA,
             fly_risk=fly_risk,
             venue_in_win=float(venue_in) if venue_in is not None else None,
         )
-        combo_win = apply_course_log_prior(
+        combo_win = select_favorite_probs(
             combo_win,
-            beta=COURSE_PRIOR_BETA,
             fly_risk=fly_risk,
             venue_in_win=float(venue_in) if venue_in is not None else None,
         )

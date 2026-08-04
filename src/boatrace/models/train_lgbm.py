@@ -135,13 +135,14 @@ def _bundle_from_models(
     top3_model: lgb.LGBMClassifier | None,
     ranker: lgb.LGBMRanker | None,
 ) -> dict[str, Any]:
-    from boatrace.models.course_prior import apply_course_log_prior
+    from boatrace.models.course_prior import select_favorite_probs
 
     win_raw = _predict_pos_proba(win_model, s.X)
     win_sum = float(win_raw.sum()) or 1.0
     win_probs = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
-    win_probs = apply_course_log_prior(
+    win_probs = select_favorite_probs(
         win_probs,
+        //
         fly_risk=getattr(s, "fly_risk", 0.0),
         venue_in_win=getattr(s, "venue_in_win", None),
     )
@@ -180,11 +181,12 @@ def _race_hit_rate_multi(
         # 1着本命は win_probs 由来（bundle rankings は3連単本命）
         win_raw = _predict_pos_proba(win_model, s.X)
         win_sum = float(win_raw.sum()) or 1.0
-        from boatrace.models.course_prior import apply_course_log_prior
+        from boatrace.models.course_prior import select_favorite_probs
 
         win_probs = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
-        win_probs = apply_course_log_prior(
+        win_probs = select_favorite_probs(
             win_probs,
+            //
             fly_risk=getattr(s, "fly_risk", 0.0),
             venue_in_win=getattr(s, "venue_in_win", None),
         )

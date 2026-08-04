@@ -6,11 +6,10 @@ import math
 
 from boatrace.features.builder import GLOBAL_COURSE_WIN_PRIOR
 
-# log(p_ml) + beta * log(prior)。
-# v6モデルの勝率差は小さいため beta を強くすると本命が1号艇に潰れる。
-# 7/28-8/3: beta=0.08 で本命1号艇率≈70%、的中≈53%。
-COURSE_PRIOR_BETA = 0.08
-# 1.0=尖らせない（尖らせると1号艇率が実測より下がりすぎる）
+# 本命選定の既定（的中を常時1号艇に近づけつつ、確信度の高い非1のみ許可）
+COURSE_PRIOR_BETA = 0.30
+FAVORITE_STRENGTH_EDGE = 0.04
+FAVORITE_FLY_THRESHOLD = 0.58
 ML_PROB_SHARPEN_GAMMA = 1.0
 
 
@@ -20,11 +19,9 @@ def _adjusted_course_priors(
 ) -> dict[int, float]:
     """1号艇飛びリスク・場イン勝率で全国事前を補正."""
     priors = {int(k): float(v) for k, v in GLOBAL_COURSE_WIN_PRIOR.items()}
-    # 場のインが弱いほど1コース事前を落とす
     if venue_in_win is not None:
         delta = float(venue_in_win) - 0.55
         priors[1] = max(0.28, min(0.65, priors[1] + delta * 0.6))
-    # 飛びリスクで1→2/3/4へ質量移動
     fr = max(0.0, min(1.0, float(fly_risk or 0.0)))
     if fr > 0.25:
         move = min(0.28, (fr - 0.25) * 0.55)
@@ -43,15 +40,9 @@ def apply_course_log_prior(
     fly_risk: float = 0.0,
     venue_in_win: float | None = None,
 ) -> dict[int, float]:
-    """選手力ベース確率に全国コース事前を対数空間で混合して正規化.
-
-    2段階:
-      1) 選手力 probs（ML）
-      2) 補正済みコース事前を beta で混合 → 本命選定
-    """
+    """選手力ベース確率に全国コース事前を対数空間で混合して正規化."""
     if not probs:
         return {}
-    # レース内で尖らせ、微小差が事前に飲まれないようにする
     if sharpen_gamma and sharpen_gamma != 1.0:
         sharpened = {w: max(float(p), 1e-12) ** float(sharpen_gamma) for w, p in probs.items()}
         s0 = sum(sharpened.values()) or 1.0
@@ -70,3 +61,50 @@ def apply_course_log_prior(
     exps = {w: math.exp(v - m) for w, v in scores.items()}
     s = sum(exps.values()) or 1.0
     return {w: float(v) / s for w, v in exps.items()}
+
+
+def select_favorite_probs(
+    strength_probs: dict[int, float],
+    *,
+    beta: float = COURSE_PRIOR_BETA,
+    fly_risk: float = 0.0,
+    venue_in_win: float | None = None,
+    strength_edge: float = FAVORITE_STRENGTH_EDGE,
+) -> dict[int, float]:
+    """本命選定: コース事前混合 + 非1号艇本命の実力ゲート.
+
+    非1本命は次のときだけ許可:
+    - 選手力が1号より strength_edge 以上、または
+    - 飛びリスクが高く外寄りの候補が1号以上
+    """
+    strength = apply_course_log_prior(
+        strength_probs, beta=0.0, fly_risk=0.0, venue_in_win=None
+    )
+    calibrated = apply_course_log_prior(
+        strength_probs,
+        beta=beta,
+        fly_risk=fly_risk,
+        venue_in_win=venue_in_win,
+    )
+    fav = max(calibrated, key=calibrated.get)
+    if fav == 1:
+        return calibrated
+
+    s1 = float(strength.get(1, 0.0))
+    sf = float(strength.get(fav, 0.0))
+    fr = float(fly_risk or 0.0)
+    allow = False
+    if sf >= s1 + strength_edge:
+        allow = True
+    if fr >= FAVORITE_FLY_THRESHOLD and fav in {2, 3, 4} and sf >= s1:
+        allow = True
+    if venue_in_win is not None and float(venue_in_win) < 0.48 and sf >= s1 + strength_edge * 0.5:
+        allow = True
+    if allow:
+        return calibrated
+
+    out = dict(calibrated)
+    others_max = max((v for w, v in out.items() if w != 1), default=0.0)
+    out[1] = others_max + 0.01
+    s = sum(out.values()) or 1.0
+    return {w: float(v) / s for w, v in out.items()}
