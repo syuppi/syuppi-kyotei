@@ -49,9 +49,8 @@ HITRATE_EXTRA_FEATURES: list[str] = [
     "temperature_norm",
     "ex_time_gap",
     "ex_st_gap_vs_best",
-    "st_gap_vs_inner",
+    # st_gap_vs_inner / course1_upset_pressure は枠を代理しやすいのでML除外
     "course1_fly_risk",
-    "course1_upset_pressure",
 ]
 
 # 評価指標

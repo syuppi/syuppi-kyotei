@@ -181,13 +181,11 @@ def boat_feature_vector(features, boat_idx: int, ranks: dict[str, list[float]]) 
         "ex_st_gap_vs_best": float(
             raw.get("ex_st_gap_vs_best") if raw.get("ex_st_gap_vs_best") is not None else 0.02
         ),
-        "st_gap_vs_inner": float(raw.get("st_gap_vs_inner") or 0.0),
         "course1_fly_risk": float(
-            raw.get("course1_fly_risk")
-            if raw.get("course1_fly_risk") is not None
-            else env.get("course1_fly_risk") or 0.0
+            env.get("course1_fly_risk")
+            if env.get("course1_fly_risk") is not None
+            else raw.get("course1_fly_risk") or 0.2
         ),
-        "course1_upset_pressure": float(raw.get("course1_upset_pressure") or 0.0),
     }
     vec.extend(float(extra[k]) for k in EXTRA_FEATURES)
     return vec

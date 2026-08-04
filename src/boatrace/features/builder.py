@@ -385,10 +385,13 @@ class FeatureBuilder:
         for b in boats:
             course = int(b.raw.get("course") or b.waku)
             rc = hist.racer_course_stats(b.racer_id, course, as_of)
-            # 0-1: コース勝率を 0〜0.7 想定で正規化
-            b.values["racer_course_win"] = float(max(0.0, min(1.0, rc["course_win_rate"] / 0.55)))
+            # 全国コース事前との残差（絶対コース勝率は枠リークになる）
+            prior = GLOBAL_COURSE_WIN_PRIOR.get(course, 0.08)
+            resid = float(rc["course_win_rate"]) - float(prior)
+            b.values["racer_course_win"] = float(max(0.0, min(1.0, 0.5 + resid / 0.30)))
             b.values["recent_form"] = float(rc["recent_form"])
             b.raw["racer_course_win"] = rc["course_win_rate"]
+            b.raw["racer_course_win_resid"] = resid
             b.raw["racer_course_st"] = rc["course_avg_st"]
             b.raw["racer_course_starts"] = rc["course_starts"]
             b.raw["racer_recent_form"] = rc["recent_form"]
@@ -464,22 +467,19 @@ class FeatureBuilder:
                 fly += 0.05
             fly = float(max(0.05, min(0.92, fly)))
             env["course1_fly_risk"] = fly
+            # 全艇に同じ値を入れる（艇差にすると枠リークになる）
             for b in boats:
+                b.raw["course1_fly_risk"] = fly
                 if b.waku == 1:
-                    b.raw["course1_fly_risk"] = fly
-                    # 飛びリスクが高いほど1号のコース勝率特徴を弱める（ルール側）
-                    b.values["racer_course_win"] *= 1.0 - 0.35 * fly
-                else:
-                    # 外枠は飛び時の受け皿圧力
-                    pressure = fly * (0.55 if b.waku in {2, 3, 4} else 0.35)
-                    b.raw["course1_fly_risk"] = 0.0
-                    b.raw["course1_upset_pressure"] = pressure
-                if b.waku == 1:
+                    b.values["racer_course_win"] *= 1.0 - 0.25 * fly
                     b.raw["course1_upset_pressure"] = 0.0
+                else:
+                    pressure = fly * (0.55 if b.waku in {2, 3, 4} else 0.35)
+                    b.raw["course1_upset_pressure"] = pressure
         else:
             env["course1_fly_risk"] = 0.2
             for b in boats:
-                b.raw["course1_fly_risk"] = 0.0
+                b.raw["course1_fly_risk"] = 0.2
                 b.raw["course1_upset_pressure"] = 0.0
 
     def _same_day_previous_features(
