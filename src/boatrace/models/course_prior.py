@@ -6,19 +6,32 @@ import math
 
 from boatrace.features.builder import GLOBAL_COURSE_WIN_PRIOR
 
-# log(p_ml) + beta * log(prior) の beta。
-# オフライン調整: beta=0.4 で本命1号艇率 ≈ 60-65%、的中は常時1号艇に近い水準。
-COURSE_PRIOR_BETA = 0.40
+# log(p_ml^gamma) + beta * log(prior)。
+# v6モデルの勝率差は小さいため beta を強くすると本命が1号艇に潰れる。
+# 7/28-8/3: beta=0.08 で本命1号艇率≈70%、的中≈53%。
+COURSE_PRIOR_BETA = 0.08
+# 選手力の相対差を先に強調してから事前を混ぜる
+ML_PROB_SHARPEN_GAMMA = 2.5
 
 
 def apply_course_log_prior(
     probs: dict[int, float],
     beta: float = COURSE_PRIOR_BETA,
+    sharpen_gamma: float = ML_PROB_SHARPEN_GAMMA,
 ) -> dict[int, float]:
     """選手力ベース確率に全国コース事前を対数空間で混合して正規化."""
-    if beta <= 0 or not probs:
-        s = sum(probs.values()) or 1.0
-        return {w: float(v) / s for w, v in probs.items()}
+    if not probs:
+        return {}
+    # レース内で尖らせ、微小差が事前に飲まれないようにする
+    if sharpen_gamma and sharpen_gamma != 1.0:
+        sharpened = {w: max(float(p), 1e-12) ** float(sharpen_gamma) for w, p in probs.items()}
+        s0 = sum(sharpened.values()) or 1.0
+        probs = {w: v / s0 for w, v in sharpened.items()}
+    else:
+        s0 = sum(float(v) for v in probs.values()) or 1.0
+        probs = {w: float(v) / s0 for w, v in probs.items()}
+    if beta <= 0:
+        return probs
     scores: dict[int, float] = {}
     for w, p in probs.items():
         prior = float(GLOBAL_COURSE_WIN_PRIOR.get(int(w), 1.0 / 6.0))
