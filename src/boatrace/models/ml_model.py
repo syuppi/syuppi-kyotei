@@ -144,20 +144,13 @@ class MLPredictor(BasePredictor):
 
         wakus = [b.waku for b in features.boats]
         win_raw = _pos_proba(self.win_model, X)
-        # 表示用（温度高め＝尖りすぎ防止）
-        ml_probs = softmax(win_raw.tolist(), temperature=1.05)
-        ml_map = {w: p for w, p in zip(wakus, ml_probs)}
-        # 3連系は学習時と同じ線形正規化
+        # 線形正規化を使う（softmaxは差を潰してコース事前に負ける）
         raw_sum = float(np.sum(win_raw)) or 1.0
-        combo_win = {w: float(win_raw[i] / raw_sum) for i, w in enumerate(wakus)}
+        ml_map = {w: float(win_raw[i] / raw_sum) for i, w in enumerate(wakus)}
+        combo_win = dict(ml_map)
 
-        # ルールベースはコース偏りが強いのでブレンドを極小に
-        alpha = min(self.blend, 0.05)
-        win_probs = {
-            w: (1 - alpha) * ml_map[w] + alpha * scored.win_probs[w] for w in wakus
-        }
-        s = sum(win_probs.values()) or 1.0
-        win_probs = {w: v / s for w, v in win_probs.items()}
+        # ルールベースはコース偏りが強いのでブレンドしない（実力信号を維持）
+        win_probs = dict(ml_map)
 
         # コースは特徴に入れず、対数事前だけ後付け（本命1号艇偏重を抑制）
         win_probs = apply_course_log_prior(win_probs, beta=COURSE_PRIOR_BETA)

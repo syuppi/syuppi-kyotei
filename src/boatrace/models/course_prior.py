@@ -6,12 +6,12 @@ import math
 
 from boatrace.features.builder import GLOBAL_COURSE_WIN_PRIOR
 
-# log(p_ml^gamma) + beta * log(prior)。
+# log(p_ml) + beta * log(prior)。
 # v6モデルの勝率差は小さいため beta を強くすると本命が1号艇に潰れる。
 # 7/28-8/3: beta=0.08 で本命1号艇率≈70%、的中≈53%。
 COURSE_PRIOR_BETA = 0.08
-# 選手力の相対差を先に強調してから事前を混ぜる
-ML_PROB_SHARPEN_GAMMA = 2.5
+# 1.0=尖らせない（尖らせると1号艇率が実測より下がりすぎる）
+ML_PROB_SHARPEN_GAMMA = 1.0
 
 
 def apply_course_log_prior(
