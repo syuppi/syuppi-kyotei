@@ -17,9 +17,9 @@ logger = get_logger(__name__)
 
 BASE_FEATURES = list(DEFAULT_WEIGHTS.keys())
 
-# ML用に追加する特徴（生の枠番 waku は入れない＝1号艇リーク防止）
+# ML用に追加する特徴（生の枠番 waku / 絶対コース勝率は入れない）
 EXTRA_FEATURES = [
-    "vcw_rel",
+    "vcw_resid",
     "exhibition_time_raw",
     "exhibition_st_raw",
     "avg_st_raw",
@@ -111,11 +111,11 @@ def boat_feature_vector(features, boat_idx: int, ranks: dict[str, list[float]]) 
     # 単勝オッズは逆数（人気度）。未取得時は中立
     win_odds_inv = (1.0 / float(win_odds)) if win_odds and float(win_odds) > 0 else 0.15
     extra = {
-        # レース内相対のコース強度（絶対枠番は使わない）
-        "vcw_rel": float(
-            raw.get("vcw_rel")
-            if raw.get("vcw_rel") is not None
-            else boat.values.get("venue_course_win_rate", 0.5)
+        # 場×コース勝率の全国残差（絶対勝率は枠リークになる）
+        "vcw_resid": float(
+            raw.get("vcw_resid")
+            if raw.get("vcw_resid") is not None
+            else ((boat.values.get("venue_course_win_rate", 0.5) - 0.5) * 0.25)
         ),
         "exhibition_time_raw": float(raw.get("exhibition_time") or 6.9),
         "exhibition_st_raw": float(raw.get("exhibition_st") if raw.get("exhibition_st") is not None else 0.18),

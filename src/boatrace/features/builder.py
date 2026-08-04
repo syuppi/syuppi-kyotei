@@ -176,7 +176,8 @@ class FeatureBuilder:
             missing: list[str] = []
             values: dict[str, float] = {}
 
-            # コース勝率はサンプル数で全国事前にshrink（1号艇絶対視を防ぐ）
+            # コース勝率は「全国事前との残差」だけ使う。
+            # 絶対勝率/レース内相対は常に1号艇が最大になり枠番リークになるため禁止。
             prior = GLOBAL_COURSE_WIN_PRIOR.get(course, 0.08)
             stat = course_stats.get(course) or {}
             raw_vcw = stat.get("win_rate")
@@ -188,7 +189,10 @@ class FeatureBuilder:
                 # pseudo-count=40: 少ない場データほど全国平均へ寄せる
                 pseudo = 40.0
                 vcw = (raw_vcw * starts_n + prior * pseudo) / (starts_n + pseudo)
-            values["venue_course_win_rate"] = float(max(0.02, min(0.75, vcw)))
+            resid = float(vcw) - float(prior)
+            # 0.5=全国並み。場がイン有利なら1コースが>0.5、アウト有利場なら外が>0.5
+            vcw_mapped = float(max(0.0, min(1.0, 0.5 + resid / 0.25)))
+            values["venue_course_win_rate"] = vcw_mapped
 
             if entry.local_win_rate is None:
                 missing.append("local_win_rate")
@@ -243,44 +247,37 @@ class FeatureBuilder:
             else:
                 values["recent_form"] = max(0.0, (7 - entry.previous_rank) / 6.0)
 
-            # 潮位補正特徴（インほど満潮で減点、アウトは微加点）
+            # 潮位補正（コース差はごく小さく。大きな差は枠リークになる）
             tide_adj = 0.5
             if env["tide_sensitive"] and env.get("near_high_tide"):
                 if course == 1:
-                    tide_adj = 0.30
-                elif course <= 3:
-                    tide_adj = 0.40
-                else:
-                    tide_adj = 0.60
+                    tide_adj = 0.46
+                elif course >= 4:
+                    tide_adj = 0.54
             elif env["tide_sensitive"] and env.get("near_low_tide"):
                 if course == 1:
-                    tide_adj = 0.55
+                    tide_adj = 0.52
             values["tide_adjustment"] = tide_adj
 
-            # 風向コースバイアス（コース差は弱め）
+            # 風向コースバイアス（中立寄り。選手・展示を主信号に）
             wind_bias = 0.5
             if wb in {"head", "head_light"} and (wind_spd or 0) >= 3:
-                wind_bias = 0.42 if course == 1 else (0.58 if course >= 4 else 0.52)
+                wind_bias = 0.48 if course == 1 else (0.53 if course >= 4 else 0.50)
             elif wb == "tail":
-                wind_bias = 0.56 if course == 1 else (0.45 if course >= 5 else 0.50)
-            if env["is_fixed_entry"] and course == 1:
-                wind_bias = min(1.0, wind_bias + 0.04)
-            # 場のイン有利度は弱くだけ混ぜる
-            in_adv = float(env["typical_in_advantage"])
-            if course == 1:
-                wind_bias = 0.75 * wind_bias + 0.25 * in_adv
+                wind_bias = 0.52 if course == 1 else (0.48 if course >= 5 else 0.50)
             values["wind_course_bias"] = wind_bias
 
-            # 当日同場の前レース傾向
+            # 当日同場の前レース傾向（イン率との差分だけ弱く反映）
             in_rate = float(env.get("same_day_in_win_rate") or 0.55)
             n_prev = int(env.get("same_day_prev_count") or 0)
             if n_prev <= 0:
                 values["same_day_course_form"] = 0.5
             else:
+                delta = (in_rate - 0.55) * 0.35
                 if course == 1:
-                    values["same_day_course_form"] = 0.42 + 0.30 * in_rate
+                    values["same_day_course_form"] = float(max(0.35, min(0.65, 0.5 + delta)))
                 elif course >= 4:
-                    values["same_day_course_form"] = 0.65 - 0.28 * in_rate
+                    values["same_day_course_form"] = float(max(0.35, min(0.65, 0.5 - delta)))
                 else:
                     values["same_day_course_form"] = 0.5
 
@@ -326,22 +323,13 @@ class FeatureBuilder:
                         "win_odds": entry.win_odds,
                         "weight": entry.weight,
                         "age": entry.age,
+                        "vcw_absolute": float(vcw),
+                        "vcw_resid": float(resid),
+                        "vcw_rel": float(vcw_mapped),
                     },
                     missing=missing,
                 )
             )
-
-        # コース勝率をレース内相対スコアに変換（絶対値の1号艇偏重を抑える）
-        if boats:
-            vcws = [b.values.get("venue_course_win_rate", 0.5) for b in boats]
-            mean_v = sum(vcws) / len(vcws)
-            for b, v in zip(boats, vcws):
-                # 0.5 + (v - mean): 平均より高いコースだけプラス
-                b.values["venue_course_win_rate"] = float(
-                    max(0.0, min(1.0, 0.5 + (v - mean_v)))
-                )
-                b.raw["vcw_absolute"] = float(v)
-                b.raw["vcw_rel"] = float(b.values["venue_course_win_rate"])
 
         return RaceFeatures(
             race_card_id=card.id,
