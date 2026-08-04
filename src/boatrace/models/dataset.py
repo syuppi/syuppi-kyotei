@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from boatrace.db.models import RaceCard
 from boatrace.features.builder import DEFAULT_WEIGHTS, FeatureBuilder
+from boatrace.features.hitrate_design import HITRATE_EXTRA_FEATURES
 from boatrace.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -67,7 +68,7 @@ EXTRA_FEATURES = [
     "ex_st_rank",
     "local_rank",
     "motor_rank",
-]
+] + list(HITRATE_EXTRA_FEATURES)
 
 FEATURE_COLUMNS = ML_BASE_FEATURES + EXTRA_FEATURES
 
@@ -82,6 +83,8 @@ class RaceSample:
     y: np.ndarray  # (6,) 1=win else 0
     y_rank: np.ndarray  # (6,) 着順 1-6
     wakus: list[int]
+    fly_risk: float = 0.0
+    venue_in_win: float = 0.55
 
 
 def _rank_desc(values: list[float | None]) -> list[float]:
@@ -123,7 +126,8 @@ def boat_feature_vector(features, boat_idx: int, ranks: dict[str, list[float]]) 
     # 単勝オッズは逆数（人気度）。未取得時は中立
     win_odds_inv = (1.0 / float(win_odds)) if win_odds and float(win_odds) > 0 else 0.15
     extra = {
-        "exhibition_time_raw": float(raw.get("exhibition_time") or 6.9),        "exhibition_st_raw": float(raw.get("exhibition_st") if raw.get("exhibition_st") is not None else 0.18),
+        "exhibition_time_raw": float(raw.get("exhibition_time") or 6.9),
+        "exhibition_st_raw": float(raw.get("exhibition_st") if raw.get("exhibition_st") is not None else 0.18),
         "avg_st_raw": float(raw.get("avg_st") or 0.18),
         "local_win_raw": float(raw.get("local_win_rate") or 5.0),
         "national_win_raw": float(raw.get("national_win_rate") or 5.0),
@@ -157,17 +161,46 @@ def boat_feature_vector(features, boat_idx: int, ranks: dict[str, list[float]]) 
         "ex_st_rank": ranks["ex_st"][boat_idx],
         "local_rank": ranks["local"][boat_idx],
         "motor_rank": ranks["motor"][boat_idx],
+        # --- hitrate P0 extras ---
+        "racer_course_st": float(raw.get("racer_course_st") or 0.18),
+        "racer_recent_form": float(
+            raw.get("racer_recent_form")
+            if raw.get("racer_recent_form") is not None
+            else boat.values.get("recent_form", 0.4)
+        ),
+        "motor_recent_q": float(raw.get("motor_recent_q") or 0.3),
+        "venue_nige_rate": float(env.get("venue_nige_rate") or raw.get("venue_nige_rate") or 0.52),
+        "venue_makuri_rate": float(env.get("venue_makuri_rate") or raw.get("venue_makuri_rate") or 0.15),
+        "venue_sashi_rate": float(env.get("venue_sashi_rate") or raw.get("venue_sashi_rate") or 0.12),
+        "venue_kado_strength": float(
+            env.get("venue_kado_strength") or raw.get("venue_kado_strength") or 0.5
+        ),
+        "venue_in_win_rate": float(env.get("venue_in_win_rate") or raw.get("venue_in_win_rate") or 0.55),
+        "temperature_norm": float(env.get("temperature") or 20.0) / 40.0,
+        "ex_time_gap": float(raw.get("ex_time_gap") if raw.get("ex_time_gap") is not None else 0.05),
+        "ex_st_gap_vs_best": float(
+            raw.get("ex_st_gap_vs_best") if raw.get("ex_st_gap_vs_best") is not None else 0.02
+        ),
+        "st_gap_vs_inner": float(raw.get("st_gap_vs_inner") or 0.0),
+        "course1_fly_risk": float(
+            raw.get("course1_fly_risk")
+            if raw.get("course1_fly_risk") is not None
+            else env.get("course1_fly_risk") or 0.0
+        ),
+        "course1_upset_pressure": float(raw.get("course1_upset_pressure") or 0.0),
     }
     vec.extend(float(extra[k]) for k in EXTRA_FEATURES)
     return vec
 
 
-def build_race_sample(session: Session, card: RaceCard) -> RaceSample | None:
+def build_race_sample(
+    session: Session, card: RaceCard, builder: FeatureBuilder | None = None
+) -> RaceSample | None:
     if not card.result or not card.result.rank1_waku:
         return None
     if len(card.entries) < 6:
         return None
-    builder = FeatureBuilder(session)
+    builder = builder or FeatureBuilder(session)
     try:
         feats = builder.build(card.id)
     except Exception as e:  # noqa: BLE001
@@ -216,6 +249,8 @@ def build_race_sample(session: Session, card: RaceCard) -> RaceSample | None:
         y=y,
         y_rank=y_rank,
         wakus=wakus,
+        fly_risk=float(feats.env.get("course1_fly_risk") or 0.0),
+        venue_in_win=float(feats.env.get("venue_in_win_rate") or 0.55),
     )
 
 
@@ -250,8 +285,11 @@ def build_dataset(
 ) -> tuple[list[RaceSample], dict[str, Any]]:
     cards = iter_finished_cards(session, start, end)
     samples: list[RaceSample] = []
+    builder = FeatureBuilder(session)
+    # 履歴インデックスを先に温める
+    builder.history
     for i, card in enumerate(cards):
-        sample = build_race_sample(session, card)
+        sample = build_race_sample(session, card, builder=builder)
         if sample is not None:
             samples.append(sample)
         if (i + 1) % 500 == 0:

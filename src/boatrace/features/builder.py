@@ -10,23 +10,25 @@ from sqlalchemy.orm import Session, joinedload
 
 from boatrace.config import get_settings, get_venue_map
 from boatrace.db.models import RaceCard, RaceEntry, RaceResult, VenueBias, VenueCourseStats
+from boatrace.features.history_index import get_history_index
 
 
 DEFAULT_WEIGHTS: dict[str, float] = {
     # コース事前は弱め（選手・展示・モーターを主信号に）
     "venue_course_win_rate": 0.08,
-    "local_win_rate": 0.14,
-    "exhibition_advantage": 0.14,
-    "exhibition_st_advantage": 0.10,
-    "motor_quinella_rate": 0.09,
-    "national_win_rate": 0.09,
-    "grade_strength": 0.08,
-    "recent_form": 0.07,
-    "boat_quinella_rate": 0.06,
+    "local_win_rate": 0.12,
+    "exhibition_advantage": 0.13,
+    "exhibition_st_advantage": 0.11,
+    "motor_quinella_rate": 0.08,
+    "national_win_rate": 0.08,
+    "grade_strength": 0.07,
+    "recent_form": 0.08,
+    "boat_quinella_rate": 0.05,
     "st_advantage": 0.06,
-    "tide_adjustment": 0.03,
-    "wind_course_bias": 0.03,
-    "same_day_course_form": 0.03,
+    "racer_course_win": 0.10,
+    "tide_adjustment": 0.02,
+    "wind_course_bias": 0.02,
+    "same_day_course_form": 0.02,
 }
 
 # 全国おおよそのコース1着率（shrink の事前）
@@ -97,6 +99,13 @@ class FeatureBuilder:
         self.session = session
         self.settings = get_settings()
         self.venue_map = get_venue_map()
+        self._history = None
+
+    @property
+    def history(self):
+        if self._history is None:
+            self._history = get_history_index(self.session)
+        return self._history
 
     def build(self, race_card_id: int) -> RaceFeatures:
         card = (
@@ -240,12 +249,15 @@ class FeatureBuilder:
                 missing.append("grade_strength")
             values["grade_strength"] = GRADE_SCORE.get(grade, 0.45)
 
-            # 直近フォーム（前走着順を簡易利用）
+            # 直近フォーム（前走着順を簡易利用）— 履歴があれば上書き
             if entry.previous_rank is None:
                 values["recent_form"] = 0.4
                 missing.append("recent_form")
             else:
                 values["recent_form"] = max(0.0, (7 - entry.previous_rank) / 6.0)
+
+            # 選手×コース勝率（履歴）。枠リークではなく「そのコースでの実力」
+            values["racer_course_win"] = 0.5
 
             # 潮位補正（コース差はごく小さく。大きな差は枠リークになる）
             tide_adj = 0.5
@@ -323,6 +335,7 @@ class FeatureBuilder:
                         "win_odds": entry.win_odds,
                         "weight": entry.weight,
                         "age": entry.age,
+                        "motor_no": entry.motor_no,
                         "vcw_absolute": float(vcw),
                         "vcw_resid": float(resid),
                         "vcw_rel": float(vcw_mapped),
@@ -330,6 +343,9 @@ class FeatureBuilder:
                     missing=missing,
                 )
             )
+
+        # --- 履歴・相対特徴の付与（的中率改善 P0） ---
+        self._enrich_history_and_risk(card, boats, env)
 
         return RaceFeatures(
             race_card_id=card.id,
@@ -339,6 +355,132 @@ class FeatureBuilder:
             env=env,
             condition_keys=condition_keys,
         )
+
+    def _enrich_history_and_risk(
+        self, card: RaceCard, boats: list[BoatFeatures], env: dict[str, Any]
+    ) -> None:
+        """選手コース別・場決まり手・展示差・1号艇飛びリスクを付与."""
+        as_of = card.race_date
+        hist = self.history
+        vk = hist.venue_kimarite_stats(card.venue_id, as_of)
+        env["venue_nige_rate"] = vk["nige_rate"]
+        env["venue_makuri_rate"] = vk["makuri_rate"]
+        env["venue_sashi_rate"] = vk["sashi_rate"]
+        env["venue_kado_strength"] = vk["kado_strength"]
+        env["venue_in_win_rate"] = vk["in_win_rate"]
+
+        best_ex = min(
+            (float(b.raw["exhibition_time"]) for b in boats if b.raw.get("exhibition_time")),
+            default=None,
+        )
+        best_ex_st = min(
+            (float(b.raw["exhibition_st"]) for b in boats if b.raw.get("exhibition_st") is not None),
+            default=None,
+        )
+        by_waku = {b.waku: b for b in boats}
+        inner_st = by_waku.get(1).raw.get("exhibition_st") if 1 in by_waku else None
+        w2_st = by_waku.get(2).raw.get("exhibition_st") if 2 in by_waku else None
+        w3_st = by_waku.get(3).raw.get("exhibition_st") if 3 in by_waku else None
+
+        for b in boats:
+            course = int(b.raw.get("course") or b.waku)
+            rc = hist.racer_course_stats(b.racer_id, course, as_of)
+            # 0-1: コース勝率を 0〜0.7 想定で正規化
+            b.values["racer_course_win"] = float(max(0.0, min(1.0, rc["course_win_rate"] / 0.55)))
+            b.values["recent_form"] = float(rc["recent_form"])
+            b.raw["racer_course_win"] = rc["course_win_rate"]
+            b.raw["racer_course_st"] = rc["course_avg_st"]
+            b.raw["racer_course_starts"] = rc["course_starts"]
+            b.raw["racer_recent_form"] = rc["recent_form"]
+
+            mq = hist.motor_recent_quinella(
+                card.venue_id, b.raw.get("motor_no"), as_of
+            )
+            # motor_no を raw に入れる必要がある
+            b.raw["motor_recent_q"] = mq if mq is not None else (
+                _safe_rate(b.raw.get("motor_quinella_rate"), 0.3)
+            )
+
+            # 展示ギャップ
+            et = b.raw.get("exhibition_time")
+            if best_ex is not None and et is not None:
+                b.raw["ex_time_gap"] = float(et) - float(best_ex)
+            else:
+                b.raw["ex_time_gap"] = 0.05
+            est = b.raw.get("exhibition_st")
+            if best_ex_st is not None and est is not None:
+                b.raw["ex_st_gap_vs_best"] = float(est) - float(best_ex_st)
+            else:
+                b.raw["ex_st_gap_vs_best"] = 0.02
+            if inner_st is not None and est is not None and b.waku != 1:
+                b.raw["st_gap_vs_inner"] = float(inner_st) - float(est)  # 正=インより速い
+            else:
+                b.raw["st_gap_vs_inner"] = 0.0
+
+            # 場決まり手（全員共通の環境特徴を boat raw にもコピー）
+            b.raw["venue_nige_rate"] = vk["nige_rate"]
+            b.raw["venue_makuri_rate"] = vk["makuri_rate"]
+            b.raw["venue_sashi_rate"] = vk["sashi_rate"]
+            b.raw["venue_kado_strength"] = vk["kado_strength"]
+            b.raw["venue_in_win_rate"] = vk["in_win_rate"]
+
+        # 1号艇飛びリスク（レース全体→1号艇に集約、他艇は外圧として）
+        fly = 0.15
+        if 1 in by_waku:
+            b1 = by_waku[1]
+            est1 = b1.raw.get("exhibition_st")
+            # ST遅い
+            if est1 is not None and best_ex_st is not None:
+                fly += min(0.25, max(0.0, float(est1) - float(best_ex_st)) / 0.12)
+            # 2号が速い
+            if est1 is not None and w2_st is not None and float(w2_st) + 0.03 < float(est1):
+                fly += 0.12
+            # 3号が速い（まくり差し圧）
+            if est1 is not None and w3_st is not None and float(w3_st) + 0.02 < float(est1):
+                fly += 0.10
+            # モーター弱（カード2連対が低い）
+            mq1 = _safe_rate(b1.raw.get("motor_quinella_rate"), 0.3)
+            if mq1 < 0.28:
+                fly += 0.10
+            # 選手の1コース勝率が低い
+            if float(b1.raw.get("racer_course_win") or 0.5) < 0.45:
+                fly += 0.10
+            # F持ち
+            if int(b1.raw.get("f_count") or 0) >= 1:
+                fly += 0.08
+            # 場がイン弱い / まくり多い
+            if vk["in_win_rate"] < 0.50:
+                fly += 0.08
+            if vk["makuri_rate"] + vk["makurisashi_rate"] > 0.35:
+                fly += 0.08
+            # 気象悪化
+            wind = float(env.get("wind_speed") or 0)
+            wave = float(env.get("wave_height") or 0)
+            if wind >= 5:
+                fly += 0.06
+            if wave >= 5:
+                fly += 0.08
+            if env.get("wind_bucket") in {"head", "head_light", "cross"}:
+                fly += 0.05
+            fly = float(max(0.05, min(0.92, fly)))
+            env["course1_fly_risk"] = fly
+            for b in boats:
+                if b.waku == 1:
+                    b.raw["course1_fly_risk"] = fly
+                    # 飛びリスクが高いほど1号のコース勝率特徴を弱める（ルール側）
+                    b.values["racer_course_win"] *= 1.0 - 0.35 * fly
+                else:
+                    # 外枠は飛び時の受け皿圧力
+                    pressure = fly * (0.55 if b.waku in {2, 3, 4} else 0.35)
+                    b.raw["course1_fly_risk"] = 0.0
+                    b.raw["course1_upset_pressure"] = pressure
+                if b.waku == 1:
+                    b.raw["course1_upset_pressure"] = 0.0
+        else:
+            env["course1_fly_risk"] = 0.2
+            for b in boats:
+                b.raw["course1_fly_risk"] = 0.0
+                b.raw["course1_upset_pressure"] = 0.0
 
     def _same_day_previous_features(
         self, venue_id: str, race_date: date, race_no: int

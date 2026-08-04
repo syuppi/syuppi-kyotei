@@ -215,7 +215,18 @@ class LearningService:
         )
 
         buckets: dict[tuple[Optional[str], str], dict[str, int]] = defaultdict(
-            lambda: {"n": 0, "win": 0, "quinella": 0, "trio": 0, "trifecta": 0}
+            lambda: {
+                "n": 0,
+                "win": 0,
+                "quinella": 0,
+                "trio": 0,
+                "trifecta": 0,
+                "fav_top3": 0,
+                "fav1": 0,
+                "always1": 0,
+                "fly_pred": 0,
+                "fly_hit": 0,
+            }
         )
 
         for card in cards:
@@ -275,6 +286,13 @@ class LearningService:
                 elif pred.rankings and len(pred.rankings) >= 3:
                     hit_trifecta = int(pred.rankings[:3] == true_order)
 
+            fav = pred.rankings[0] if pred.rankings else None
+            top3_set = {result.rank1_waku, result.rank2_waku, result.rank3_waku}
+            hit_fav_top3 = int(fav in top3_set) if fav and None not in top3_set else 0
+            fly_risk = float((snap.get("course1_fly_risk") or 0.0))
+            pred_fly = fly_risk >= 0.45
+            actual_fly = result.rank1_waku != 1
+
             slice_keys = ["all"]
             if card.weather:
                 wb = wind_bucket(card.weather.wind_direction, card.weather.wind_speed)
@@ -286,6 +304,10 @@ class LearningService:
                 slice_keys.append("tide_high")
             # 展示タイム帯（1号艇）
             slice_keys.append(self._exhibition_band(card))
+            if pred_fly:
+                slice_keys.append("pred_course1_fly")
+            if actual_fly:
+                slice_keys.append("actual_course1_fly")
 
             for venue_key in (None, card.venue_id):
                 for sk in slice_keys:
@@ -295,6 +317,12 @@ class LearningService:
                     b["quinella"] += hit_quinella
                     b["trio"] += hit_trio
                     b["trifecta"] += hit_trifecta
+                    b["fav_top3"] += hit_fav_top3
+                    b["fav1"] += int(fav == 1) if fav else 0
+                    b["always1"] += int(result.rank1_waku == 1)
+                    if pred_fly:
+                        b["fly_pred"] += 1
+                        b["fly_hit"] += int(actual_fly)
 
         summary = []
         for (venue_id, slice_key), b in buckets.items():
@@ -336,6 +364,12 @@ class LearningService:
                     "quinella_rate": row.quinella_rate,
                     "trio_rate": row.trio_rate,
                     "trifecta_rate": row.trifecta_rate,
+                    "favorite_in_top3": b["fav_top3"] / n,
+                    "fav1_rate": b["fav1"] / n,
+                    "always1_baseline": b["always1"] / n,
+                    "course1_fly_precision": (
+                        b["fly_hit"] / b["fly_pred"] if b["fly_pred"] else None
+                    ),
                 }
             )
         self.session.flush()

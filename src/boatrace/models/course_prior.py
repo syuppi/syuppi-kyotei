@@ -14,12 +14,41 @@ COURSE_PRIOR_BETA = 0.08
 ML_PROB_SHARPEN_GAMMA = 1.0
 
 
+def _adjusted_course_priors(
+    fly_risk: float = 0.0,
+    venue_in_win: float | None = None,
+) -> dict[int, float]:
+    """1号艇飛びリスク・場イン勝率で全国事前を補正."""
+    priors = {int(k): float(v) for k, v in GLOBAL_COURSE_WIN_PRIOR.items()}
+    # 場のインが弱いほど1コース事前を落とす
+    if venue_in_win is not None:
+        delta = float(venue_in_win) - 0.55
+        priors[1] = max(0.28, min(0.65, priors[1] + delta * 0.6))
+    # 飛びリスクで1→2/3/4へ質量移動
+    fr = max(0.0, min(1.0, float(fly_risk or 0.0)))
+    if fr > 0.25:
+        move = min(0.28, (fr - 0.25) * 0.55)
+        priors[1] = max(0.22, priors[1] - move)
+        priors[2] = priors.get(2, 0.14) + move * 0.38
+        priors[3] = priors.get(3, 0.13) + move * 0.36
+        priors[4] = priors.get(4, 0.10) + move * 0.26
+    s = sum(priors.values()) or 1.0
+    return {w: v / s for w, v in priors.items()}
+
+
 def apply_course_log_prior(
     probs: dict[int, float],
     beta: float = COURSE_PRIOR_BETA,
     sharpen_gamma: float = ML_PROB_SHARPEN_GAMMA,
+    fly_risk: float = 0.0,
+    venue_in_win: float | None = None,
 ) -> dict[int, float]:
-    """選手力ベース確率に全国コース事前を対数空間で混合して正規化."""
+    """選手力ベース確率に全国コース事前を対数空間で混合して正規化.
+
+    2段階:
+      1) 選手力 probs（ML）
+      2) 補正済みコース事前を beta で混合 → 本命選定
+    """
     if not probs:
         return {}
     # レース内で尖らせ、微小差が事前に飲まれないようにする
@@ -32,9 +61,10 @@ def apply_course_log_prior(
         probs = {w: float(v) / s0 for w, v in probs.items()}
     if beta <= 0:
         return probs
+    priors = _adjusted_course_priors(fly_risk=fly_risk, venue_in_win=venue_in_win)
     scores: dict[int, float] = {}
     for w, p in probs.items():
-        prior = float(GLOBAL_COURSE_WIN_PRIOR.get(int(w), 1.0 / 6.0))
+        prior = float(priors.get(int(w), 1.0 / 6.0))
         scores[w] = math.log(max(float(p), 1e-12)) + beta * math.log(max(prior, 1e-12))
     m = max(scores.values())
     exps = {w: math.exp(v - m) for w, v in scores.items()}

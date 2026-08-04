@@ -150,11 +150,23 @@ class MLPredictor(BasePredictor):
         combo_win = dict(ml_map)
 
         # ルールベースはコース偏りが強いのでブレンドしない（実力信号を維持）
-        win_probs = dict(ml_map)
+        strength_probs = dict(ml_map)
 
-        # コースは特徴に入れず、対数事前だけ後付け（本命1号艇偏重を抑制）
-        win_probs = apply_course_log_prior(win_probs, beta=COURSE_PRIOR_BETA)
-        combo_win = apply_course_log_prior(combo_win, beta=COURSE_PRIOR_BETA)
+        # 2段階本命選定: 選手力 → 飛びリスク補正付きコース事前
+        fly_risk = float(features.env.get("course1_fly_risk") or 0.0)
+        venue_in = features.env.get("venue_in_win_rate")
+        win_probs = apply_course_log_prior(
+            strength_probs,
+            beta=COURSE_PRIOR_BETA,
+            fly_risk=fly_risk,
+            venue_in_win=float(venue_in) if venue_in is not None else None,
+        )
+        combo_win = apply_course_log_prior(
+            combo_win,
+            beta=COURSE_PRIOR_BETA,
+            fly_risk=fly_risk,
+            venue_in_win=float(venue_in) if venue_in is not None else None,
+        )
 
         top2_probs = None
         top3_probs = None
@@ -245,6 +257,8 @@ class MLPredictor(BasePredictor):
 
         snap = dict(scored.feature_snapshot)
         snap["ml_raw"] = {str(w): float(v) for w, v in zip(wakus, win_raw)}
+        snap["strength_probs"] = {str(w): float(v) for w, v in strength_probs.items()}
+        snap["course1_fly_risk"] = fly_risk
         snap["model"] = self.name
         snap["version"] = self.version
         snap["sanrentan"] = bundle["sanrentan"]

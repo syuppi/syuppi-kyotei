@@ -140,7 +140,11 @@ def _bundle_from_models(
     win_raw = _predict_pos_proba(win_model, s.X)
     win_sum = float(win_raw.sum()) or 1.0
     win_probs = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
-    win_probs = apply_course_log_prior(win_probs)
+    win_probs = apply_course_log_prior(
+        win_probs,
+        fly_risk=getattr(s, "fly_risk", 0.0),
+        venue_in_win=getattr(s, "venue_in_win", None),
+    )
     top2_probs = None
     top3_probs = None
     rank_scores = None
@@ -169,10 +173,22 @@ def _race_hit_rate_multi(
     ranker: lgb.LGBMRanker | None = None,
 ) -> dict[str, float]:
     hit1 = hit2 = hit3 = hit_tf = hit_tf3 = 0
+    fav_top3 = always1 = fav1 = fly_pred = fly_hit = 0
     n = 0
     for s in samples:
         bundle = _bundle_from_models(s, win_model, top2_model, top3_model, ranker)
-        rankings = bundle["rankings"]
+        # 1着本命は win_probs 由来（bundle rankings は3連単本命）
+        win_raw = _predict_pos_proba(win_model, s.X)
+        win_sum = float(win_raw.sum()) or 1.0
+        from boatrace.models.course_prior import apply_course_log_prior
+
+        win_probs = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
+        win_probs = apply_course_log_prior(
+            win_probs,
+            fly_risk=getattr(s, "fly_risk", 0.0),
+            venue_in_win=getattr(s, "venue_in_win", None),
+        )
+        rankings = sorted(s.wakus, key=lambda w: win_probs[w], reverse=True)
         winner = s.wakus[int(np.argmax(s.y))]
         by_rank = sorted(range(6), key=lambda i: s.y_rank[i])
         true_top2 = {s.wakus[i] for i in by_rank[:2]}
@@ -185,6 +201,15 @@ def _race_hit_rate_multi(
 
         n += 1
         hit1 += int(rankings[0] == winner)
+        fav_top3 += int(rankings[0] in true_top3)
+        always1 += int(winner == 1)
+        fav1 += int(rankings[0] == 1)
+        # 飛び予測: fly_risk>=0.45 で1号非勝利を予測
+        pred_fly = getattr(s, "fly_risk", 0.0) >= 0.45
+        actual_fly = winner != 1
+        if pred_fly:
+            fly_pred += 1
+            fly_hit += int(actual_fly)
         hit2 += int(true_top2 == set(bundle["candidates_quinella"][:2]))
         if sp_cands:
             hit3 += int(true_top3 in sp_cands)
@@ -201,6 +226,10 @@ def _race_hit_rate_multi(
             "trio_rate": 0.0,
             "trifecta_rate": 0.0,
             "trifecta_top3_rate": 0.0,
+            "favorite_in_top3": 0.0,
+            "fav1_rate": 0.0,
+            "always1_baseline": 0.0,
+            "course1_fly_precision": 0.0,
         }
     return {
         "n": n,
@@ -209,6 +238,11 @@ def _race_hit_rate_multi(
         "trio_rate": hit3 / n,
         "trifecta_rate": hit_tf / n,
         "trifecta_top3_rate": hit_tf3 / n,
+        "favorite_in_top3": fav_top3 / n,
+        "fav1_rate": fav1 / n,
+        "always1_baseline": always1 / n,
+        "course1_fly_precision": (fly_hit / fly_pred) if fly_pred else 0.0,
+        "course1_fly_pred_rate": fly_pred / n,
     }
 
 
@@ -293,7 +327,7 @@ def train_lgbm(
             "valid_no_ranker": valid_no_ranker,
         },
         "feature_importance": importance,
-        "version": "debiase_v6",
+        "version": "hitrate_v1",
     }
     joblib.dump(payload, model_path)
     logger.info("model_saved", path=str(model_path), valid=valid_m)
@@ -383,7 +417,7 @@ def retrain_all_before_today(
             "trained_at": date.today().isoformat(),
             "metrics": metrics,
             "feature_importance": importance,
-            "version": "debiase_v6",
+            "version": "hitrate_v1",
         },
         path,
     )
