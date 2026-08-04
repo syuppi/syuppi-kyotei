@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session, joinedload
 
-from boatrace.config import get_settings
+from boatrace.config import get_settings, get_venue_map
 from boatrace.db.models import (
     AccuracyDaily,
     ModelWeights,
@@ -29,7 +29,14 @@ def condition_keys_for_card(card: RaceCard) -> list[str]:
     weather = card.weather
     tide = card.tide
     if weather:
-        wb = wind_bucket(weather.wind_direction, weather.wind_speed)
+        venue_map = get_venue_map()
+        heading = None
+        vc = venue_map.get(card.venue_id)
+        if vc is not None:
+            heading = vc.course_heading_deg
+        wb = wind_bucket(
+            weather.wind_direction, weather.wind_speed, course_heading_deg=heading
+        )
         if wb in {"head", "head_light"} and (weather.wind_speed or 0) >= 3:
             keys.append("wind_head_ge3")
         if wb == "tail":
@@ -295,7 +302,14 @@ class LearningService:
 
             slice_keys = ["all"]
             if card.weather:
-                wb = wind_bucket(card.weather.wind_direction, card.weather.wind_speed)
+                venue_map = get_venue_map()
+                vc = venue_map.get(card.venue_id)
+                heading = vc.course_heading_deg if vc else None
+                wb = wind_bucket(
+                    card.weather.wind_direction,
+                    card.weather.wind_speed,
+                    course_heading_deg=heading,
+                )
                 if (card.weather.wind_speed or 0) >= 3:
                     slice_keys.append(f"wind_{wb}_ge3")
                 else:

@@ -94,6 +94,8 @@ class VenueConfig(BaseModel):
     water_type: str = "unknown"
     tide_station: str | None = None
     typical_in_advantage: float = 0.52
+    # ホームストレッチ進行方位（度, 北=0）。絶対風向→相対変換用
+    course_heading_deg: float | None = None
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

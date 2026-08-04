@@ -69,6 +69,7 @@ class MLPredictor(BasePredictor):
         self.top2_model: Any | None = None
         self.top3_model: Any | None = None
         self.ranker: Any | None = None
+        self.fly_model: Any | None = None
         self.session = session
         self.feature_columns = FEATURE_COLUMNS
         self.importance: dict[str, float] = {}
@@ -94,6 +95,7 @@ class MLPredictor(BasePredictor):
                 self.top2_model = models.get("top2")
                 self.top3_model = models.get("top3")
                 self.ranker = models.get("ranker")
+                self.fly_model = models.get("course1_fly") or payload.get("fly_model")
                 self.feature_columns = payload.get("feature_columns", FEATURE_COLUMNS)
                 self.importance = payload.get("feature_importance") or {}
                 self.version = payload.get("version") or (
@@ -103,11 +105,13 @@ class MLPredictor(BasePredictor):
                 )
             else:
                 self.win_model = payload
+                self.fly_model = None
         except Exception:
             self.win_model = None
             self.top2_model = None
             self.top3_model = None
             self.ranker = None
+            self.fly_model = None
 
     @property
     def model(self) -> Any | None:
@@ -147,23 +151,35 @@ class MLPredictor(BasePredictor):
         # 線形正規化を使う（softmaxは差を潰してコース事前に負ける）
         raw_sum = float(np.sum(win_raw)) or 1.0
         ml_map = {w: float(win_raw[i] / raw_sum) for i, w in enumerate(wakus)}
-        combo_win = dict(ml_map)
 
         # ルールベースはコース偏りが強いのでブレンドしない（実力信号を維持）
         strength_probs = dict(ml_map)
 
-        # 2段階本命選定: 選手力 → 補正コース事前 + 非1号艇ゲート
-        fly_risk = float(features.env.get("course1_fly_risk") or 0.0)
+        # 飛びリスク: 専用モデルがあれば優先（ヒューリスティックと軽くブレンド）
+        heuristic_fly = float(features.env.get("course1_fly_risk") or 0.0)
+        fly_risk = heuristic_fly
+        if self.fly_model is not None:
+            try:
+                idx = wakus.index(1)
+                ml_fly = float(_pos_proba(self.fly_model, X[idx : idx + 1])[0])
+                fly_risk = 0.65 * ml_fly + 0.35 * heuristic_fly
+            except Exception:
+                pass
         venue_in = features.env.get("venue_in_win_rate")
+        venue_in_f = float(venue_in) if venue_in is not None else None
+
+        # 単勝: コース事後 + 非1本命ゲート（的中優先）
         win_probs = select_favorite_probs(
             strength_probs,
             fly_risk=fly_risk,
-            venue_in_win=float(venue_in) if venue_in is not None else None,
+            venue_in_win=venue_in_f,
         )
-        combo_win = select_favorite_probs(
-            combo_win,
+        # 3連系: ゲートなしの広い実力分布
+        combo_win = apply_course_log_prior(
+            strength_probs,
+            beta=0.15,
             fly_risk=fly_risk,
-            venue_in_win=float(venue_in) if venue_in is not None else None,
+            venue_in_win=venue_in_f,
         )
 
         top2_probs = None
@@ -257,6 +273,8 @@ class MLPredictor(BasePredictor):
         snap["ml_raw"] = {str(w): float(v) for w, v in zip(wakus, win_raw)}
         snap["strength_probs"] = {str(w): float(v) for w, v in strength_probs.items()}
         snap["course1_fly_risk"] = fly_risk
+        snap["course1_fly_heuristic"] = heuristic_fly
+        snap["has_fly_model"] = self.fly_model is not None
         snap["model"] = self.name
         snap["version"] = self.version
         snap["sanrentan"] = bundle["sanrentan"]

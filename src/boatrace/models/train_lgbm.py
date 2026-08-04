@@ -134,16 +134,19 @@ def _bundle_from_models(
     top2_model: lgb.LGBMClassifier | None,
     top3_model: lgb.LGBMClassifier | None,
     ranker: lgb.LGBMRanker | None,
+    fly_model: lgb.LGBMClassifier | None = None,
 ) -> dict[str, Any]:
-    from boatrace.models.course_prior import select_favorite_probs
+    from boatrace.models.course_prior import apply_course_log_prior, select_favorite_probs
 
     win_raw = _predict_pos_proba(win_model, s.X)
     win_sum = float(win_raw.sum()) or 1.0
-    win_probs = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
-    win_probs = select_favorite_probs(
-        win_probs,
-        //
-        fly_risk=getattr(s, "fly_risk", 0.0),
+    strength = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
+    fly_risk = _resolve_fly_risk(s, fly_model)
+    # 3連系はゲートなしの広い分布
+    combo_win = apply_course_log_prior(
+        strength,
+        beta=0.15,
+        fly_risk=fly_risk,
         venue_in_win=getattr(s, "venue_in_win", None),
     )
     top2_probs = None
@@ -157,13 +160,26 @@ def _bundle_from_models(
         top3_probs = {s.wakus[i]: float(r3[i]) for i in range(6)}
     if ranker is not None:
         rs = np.asarray(ranker.predict(s.X), dtype=float)
-        # softmax-ish positive
         rs = rs - rs.max()
         rs = np.exp(rs)
         rank_scores = {s.wakus[i]: float(rs[i]) for i in range(6)}
     return build_combination_bundle(
-        win_probs, top2_probs, top3_probs, rank_scores=rank_scores
+        combo_win, top2_probs, top3_probs, rank_scores=rank_scores
     )
+
+
+def _resolve_fly_risk(
+    s: RaceSample, fly_model: lgb.LGBMClassifier | None
+) -> float:
+    heuristic = float(getattr(s, "fly_risk", 0.0) or 0.0)
+    if fly_model is None:
+        return heuristic
+    try:
+        idx = s.wakus.index(1)
+        ml_fly = float(_predict_pos_proba(fly_model, s.X[idx : idx + 1])[0])
+        return 0.65 * ml_fly + 0.35 * heuristic
+    except Exception:
+        return heuristic
 
 
 def _race_hit_rate_multi(
@@ -172,22 +188,24 @@ def _race_hit_rate_multi(
     top2_model: lgb.LGBMClassifier | None = None,
     top3_model: lgb.LGBMClassifier | None = None,
     ranker: lgb.LGBMRanker | None = None,
+    fly_model: lgb.LGBMClassifier | None = None,
 ) -> dict[str, float]:
     hit1 = hit2 = hit3 = hit_tf = hit_tf3 = 0
     fav_top3 = always1 = fav1 = fly_pred = fly_hit = 0
     n = 0
+    from boatrace.models.course_prior import select_favorite_probs
+
     for s in samples:
-        bundle = _bundle_from_models(s, win_model, top2_model, top3_model, ranker)
-        # 1着本命は win_probs 由来（bundle rankings は3連単本命）
+        bundle = _bundle_from_models(
+            s, win_model, top2_model, top3_model, ranker, fly_model=fly_model
+        )
         win_raw = _predict_pos_proba(win_model, s.X)
         win_sum = float(win_raw.sum()) or 1.0
-        from boatrace.models.course_prior import select_favorite_probs
-
-        win_probs = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
+        strength = {s.wakus[i]: float(win_raw[i] / win_sum) for i in range(6)}
+        fly_risk = _resolve_fly_risk(s, fly_model)
         win_probs = select_favorite_probs(
-            win_probs,
-            //
-            fly_risk=getattr(s, "fly_risk", 0.0),
+            strength,
+            fly_risk=fly_risk,
             venue_in_win=getattr(s, "venue_in_win", None),
         )
         rankings = sorted(s.wakus, key=lambda w: win_probs[w], reverse=True)
@@ -206,8 +224,7 @@ def _race_hit_rate_multi(
         fav_top3 += int(rankings[0] in true_top3)
         always1 += int(winner == 1)
         fav1 += int(rankings[0] == 1)
-        # 飛び予測: fly_risk>=0.45 で1号非勝利を予測
-        pred_fly = getattr(s, "fly_risk", 0.0) >= 0.45
+        pred_fly = fly_risk >= 0.50
         actual_fly = winner != 1
         if pred_fly:
             fly_pred += 1
@@ -252,6 +269,25 @@ def _race_hit_rate(samples: list[RaceSample], model: lgb.LGBMClassifier) -> dict
     return _race_hit_rate_multi(samples, model)
 
 
+def _stack_fly_dataset(
+    samples: list[RaceSample],
+) -> tuple[np.ndarray, np.ndarray]:
+    """レース単位: 1号艇特徴 → ラベル=1号艇が飛んだ(1着≠1)."""
+    Xs: list[np.ndarray] = []
+    ys: list[int] = []
+    for s in samples:
+        try:
+            idx = s.wakus.index(1)
+        except ValueError:
+            continue
+        Xs.append(s.X[idx])
+        winner = s.wakus[int(np.argmax(s.y))]
+        ys.append(1 if winner != 1 else 0)
+    if not Xs:
+        return np.zeros((0, len(FEATURE_COLUMNS))), np.zeros((0,), dtype=np.int32)
+    return np.vstack(Xs), np.asarray(ys, dtype=np.int32)
+
+
 def _train_place_models(
     train_samples: list[RaceSample],
     valid_samples: list[RaceSample],
@@ -260,6 +296,7 @@ def _train_place_models(
     lgb.LGBMClassifier,
     lgb.LGBMClassifier,
     lgb.LGBMRanker,
+    lgb.LGBMClassifier | None,
     dict[str, float],
 ]:
     X_train, y_win_tr, _ = stack_samples(train_samples)
@@ -272,12 +309,18 @@ def _train_place_models(
     top3_model = _fit_binary(X_train, y_top3_tr, X_valid, y_top3_va)
     ranker = _fit_ranker(train_samples, valid_samples)
 
+    X_fly_tr, y_fly_tr = _stack_fly_dataset(train_samples)
+    X_fly_va, y_fly_va = _stack_fly_dataset(valid_samples)
+    fly_model = None
+    if len(y_fly_tr) >= 200 and y_fly_tr.sum() >= 20:
+        fly_model = _fit_binary(X_fly_tr, y_fly_tr, X_fly_va, y_fly_va, n_estimators=300)
+
     importance = {
         FEATURE_COLUMNS[i]: float(v)
         for i, v in enumerate(win_model.feature_importances_)
     }
     importance = dict(sorted(importance.items(), key=lambda x: -x[1]))
-    return win_model, top2_model, top3_model, ranker, importance
+    return win_model, top2_model, top3_model, ranker, fly_model, importance
 
 
 def train_lgbm(
@@ -296,19 +339,19 @@ def train_lgbm(
     logger.info("build_valid_dataset", start=valid_start.isoformat(), end=valid_end.isoformat())
     valid_samples, valid_meta = build_dataset(session, valid_start, valid_end)
 
-    win_model, top2_model, top3_model, ranker, importance = _train_place_models(
+    win_model, top2_model, top3_model, ranker, fly_model, importance = _train_place_models(
         train_samples, valid_samples
     )
 
     train_m = _race_hit_rate_multi(
-        train_samples, win_model, top2_model, top3_model, ranker
+        train_samples, win_model, top2_model, top3_model, ranker, fly_model=fly_model
     )
     valid_m = _race_hit_rate_multi(
-        valid_samples, win_model, top2_model, top3_model, ranker
+        valid_samples, win_model, top2_model, top3_model, ranker, fly_model=fly_model
     )
     # データ増分のみ（ランカー無し）との差分を同一holdoutで計測
     valid_no_ranker = _race_hit_rate_multi(
-        valid_samples, win_model, top2_model, top3_model, None
+        valid_samples, win_model, top2_model, top3_model, None, fly_model=fly_model
     )
 
     payload = {
@@ -318,6 +361,7 @@ def train_lgbm(
             "top2": top2_model,
             "top3": top3_model,
             "ranker": ranker,
+            "course1_fly": fly_model,
         },
         "feature_columns": FEATURE_COLUMNS,
         "trained_at": date.today().isoformat(),
@@ -329,7 +373,7 @@ def train_lgbm(
             "valid_no_ranker": valid_no_ranker,
         },
         "feature_importance": importance,
-        "version": "hitrate_v2",
+        "version": "hitrate_v3",
     }
     joblib.dump(payload, model_path)
     logger.info("model_saved", path=str(model_path), valid=valid_m)
@@ -391,7 +435,7 @@ def retrain_all_before_today(
     if not valid_s:
         valid_s = train_s[-max(1, len(train_s) // 10) :]
 
-    win_model, top2_model, top3_model, ranker, importance = _train_place_models(
+    win_model, top2_model, top3_model, ranker, fly_model, importance = _train_place_models(
         train_s, valid_s
     )
     path = model_path or DEFAULT_MODEL_PATH
@@ -399,10 +443,10 @@ def retrain_all_before_today(
         "holdout_valid": first.metrics.get("valid"),
         "holdout_valid_no_ranker": first.metrics.get("valid_no_ranker"),
         "final_train_race_hit": _race_hit_rate_multi(
-            train_s, win_model, top2_model, top3_model, ranker
+            train_s, win_model, top2_model, top3_model, ranker, fly_model=fly_model
         ),
         "final_tail_hit": _race_hit_rate_multi(
-            valid_s, win_model, top2_model, top3_model, ranker
+            valid_s, win_model, top2_model, top3_model, ranker, fly_model=fly_model
         ),
         "meta": meta,
     }
@@ -414,12 +458,13 @@ def retrain_all_before_today(
                 "top2": top2_model,
                 "top3": top3_model,
                 "ranker": ranker,
+                "course1_fly": fly_model,
             },
             "feature_columns": FEATURE_COLUMNS,
             "trained_at": date.today().isoformat(),
             "metrics": metrics,
             "feature_importance": importance,
-            "version": "hitrate_v2",
+            "version": "hitrate_v3",
         },
         path,
     )

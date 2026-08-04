@@ -22,6 +22,7 @@ class RacerRaceRecord:
     st: float | None
     venue_id: str
     motor_no: int | None
+    race_no: int = 0
 
 
 @dataclass
@@ -93,6 +94,7 @@ class HistoryIndex:
                     st=st_f,
                     venue_id=card.venue_id,
                     motor_no=entry.motor_no,
+                    race_no=int(card.race_no or 0),
                 )
                 self.racer_races.setdefault(entry.racer_id, []).append(rec)
                 if entry.motor_no is not None:
@@ -100,7 +102,7 @@ class HistoryIndex:
                     self.motor_races.setdefault(key, []).append((card.race_date, rank))
 
         for rid in self.racer_races:
-            self.racer_races[rid].sort(key=lambda r: r.race_date)
+            self.racer_races[rid].sort(key=lambda r: (r.race_date, r.race_no))
         for vid in self.venue_races:
             self.venue_races[vid].sort(key=lambda r: r.race_date)
         for key in self.motor_races:
@@ -113,6 +115,26 @@ class HistoryIndex:
             venues=len(self.venue_races),
             motors=len(self.motor_races),
         )
+
+    def last_start(
+        self,
+        racer_id: str,
+        as_of: date,
+        before_race_no: int | None = None,
+    ) -> RacerRaceRecord | None:
+        """as_of より前（同日なら before_race_no より前）の直近1走."""
+        rows = self.racer_races.get(racer_id) or []
+        past: list[RacerRaceRecord] = []
+        for r in rows:
+            if r.race_date < as_of:
+                past.append(r)
+            elif (
+                r.race_date == as_of
+                and before_race_no is not None
+                and r.race_no < before_race_no
+            ):
+                past.append(r)
+        return past[-1] if past else None
 
     def racer_course_stats(
         self, racer_id: str, course: int, as_of: date, lookback_days: int = 120

@@ -79,7 +79,11 @@ def _win_rate_norm(value: float | None, default: float = 0.05) -> float:
     return max(0.0, min(float(value) / 10.0, 1.0))
 
 
-def wind_bucket(direction: str | None, speed: float | None) -> str:
+def wind_bucket(
+    direction: str | None,
+    speed: float | None,
+    course_heading_deg: float | None = None,
+) -> str:
     if speed is None or speed < 1.0:
         return "calm"
     d = (direction or "").strip()
@@ -90,7 +94,16 @@ def wind_bucket(direction: str | None, speed: float | None) -> str:
         return "tail"
     if "横" in d:
         return "cross"
-    # OpenAPI等の方位表記は相対変換できないため other（場別学習で吸収）
+    # 絶対方位 → 場のコース方位で相対化
+    from boatrace.features.wind_utils import absolute_to_relative_label
+
+    rel = absolute_to_relative_label(d, course_heading_deg)
+    if rel == "向":
+        return "head" if speed >= 3.0 else "head_light"
+    if rel == "追":
+        return "tail"
+    if rel == "横":
+        return "cross"
     return "other"
 
 
@@ -125,7 +138,8 @@ class FeatureBuilder:
 
         wind_spd = weather.wind_speed if weather else None
         wind_dir = weather.wind_direction if weather else None
-        wb = wind_bucket(wind_dir, wind_spd)
+        heading = venue_cfg.course_heading_deg if venue_cfg else None
+        wb = wind_bucket(wind_dir, wind_spd, course_heading_deg=heading)
         wave = weather.wave_height if weather else None
 
         condition_keys = ["all"]
@@ -162,8 +176,14 @@ class FeatureBuilder:
             "grade_number": card.grade_number,
             "day_number": card.day_number,
             "distance_m": card.distance_m,
+            "course_heading_deg": heading,
             **same_day,
         }
+        from boatrace.features.wind_utils import wind_components
+
+        wcos, wsin = wind_components(wind_dir)
+        env["wind_cos"] = wcos
+        env["wind_sin"] = wsin
 
         # リーク防止: 当該レース日より前の結果だけから場コース傾向を作る
         course_stats = self._load_course_stats(
@@ -384,6 +404,14 @@ class FeatureBuilder:
 
         for b in boats:
             course = int(b.raw.get("course") or b.waku)
+            # 前走埋め（DB未設定でも特徴に反映）
+            prev = hist.last_start(b.racer_id, as_of, before_race_no=card.race_no)
+            if prev is not None:
+                b.raw["previous_rank"] = prev.rank
+                b.raw["previous_st"] = prev.st
+                b.raw["previous_course"] = prev.course
+                b.values["recent_form"] = max(0.0, (7 - prev.rank) / 6.0)
+
             rc = hist.racer_course_stats(b.racer_id, course, as_of)
             # 全国コース事前との残差（絶対コース勝率は枠リークになる）
             prior = GLOBAL_COURSE_WIN_PRIOR.get(course, 0.08)
