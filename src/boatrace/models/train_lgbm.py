@@ -18,14 +18,15 @@ from boatrace.models.combinations import build_combination_bundle
 from boatrace.models.dataset import (
     FEATURE_COLUMNS,
     RaceSample,
-    build_dataset,
     stack_place_labels,
     stack_samples,
 )
+from boatrace.models.dataset_cache import build_dataset_cached
 
 logger = get_logger(__name__)
 
 DEFAULT_MODEL_PATH = ROOT_DIR / "data" / "models" / "lgbm_win_v1.joblib"
+SMOKE_MODEL_PATH = ROOT_DIR / "data" / "models" / "lgbm_win_smoke.joblib"
 
 
 @dataclass
@@ -330,26 +331,64 @@ def train_lgbm(
     valid_start: date,
     valid_end: date,
     model_path: Path | None = None,
+    *,
+    force_rebuild_cache: bool = False,
+    samples: list[RaceSample] | None = None,
 ) -> TrainResult:
+    """期間指定で学習。samples を渡すとデータセット再構築をスキップ."""
     model_path = model_path or DEFAULT_MODEL_PATH
     model_path.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info("build_train_dataset", start=train_start.isoformat(), end=train_end.isoformat())
-    train_samples, train_meta = build_dataset(session, train_start, train_end)
-    logger.info("build_valid_dataset", start=valid_start.isoformat(), end=valid_end.isoformat())
-    valid_samples, valid_meta = build_dataset(session, valid_start, valid_end)
+    if samples is None:
+        # train+valid を一度に作って分割（二重ビルド回避）
+        full_start = min(train_start, valid_start)
+        full_end = max(train_end, valid_end)
+        logger.info(
+            "build_dataset_cached",
+            start=full_start.isoformat(),
+            end=full_end.isoformat(),
+        )
+        all_samples, all_meta = build_dataset_cached(
+            session, full_start, full_end, force_rebuild=force_rebuild_cache
+        )
+    else:
+        all_samples = samples
+        all_meta = {"samples": len(samples), "n_features": len(FEATURE_COLUMNS)}
+
+    train_samples = [s for s in all_samples if train_start <= s.race_date <= train_end]
+    valid_samples = [s for s in all_samples if valid_start <= s.race_date <= valid_end]
+    if not train_samples:
+        raise ValueError(f"no train samples in {train_start}..{train_end}")
+    if not valid_samples:
+        # 末尾10%を検証に回す
+        cut = max(1, int(len(train_samples) * 0.9))
+        valid_samples = train_samples[cut:]
+        train_samples = train_samples[:cut]
+
+    train_meta = {
+        "start": train_start.isoformat(),
+        "end": train_end.isoformat(),
+        "samples": len(train_samples),
+        "source_meta": all_meta,
+    }
+    valid_meta = {
+        "start": valid_start.isoformat(),
+        "end": valid_end.isoformat(),
+        "samples": len(valid_samples),
+    }
 
     win_model, top2_model, top3_model, ranker, fly_model, importance = _train_place_models(
         train_samples, valid_samples
     )
 
+    # 学習側メトリクスは最大3000件に間引き（評価コスト削減）
+    train_eval = train_samples[-3000:] if len(train_samples) > 3000 else train_samples
     train_m = _race_hit_rate_multi(
-        train_samples, win_model, top2_model, top3_model, ranker, fly_model=fly_model
+        train_eval, win_model, top2_model, top3_model, ranker, fly_model=fly_model
     )
     valid_m = _race_hit_rate_multi(
         valid_samples, win_model, top2_model, top3_model, ranker, fly_model=fly_model
     )
-    # データ増分のみ（ランカー無し）との差分を同一holdoutで計測
     valid_no_ranker = _race_hit_rate_multi(
         valid_samples, win_model, top2_model, top3_model, None, fly_model=fly_model
     )
@@ -407,13 +446,43 @@ def train_default_split(session: Session, days: int = 90, model_path: Path | Non
     )
 
 
+def smoke_retrain(
+    session: Session,
+    *,
+    days: int = 45,
+    model_path: Path | None = None,
+    force_rebuild_cache: bool = False,
+) -> TrainResult:
+    """フル学習の前に回す軽量検証（直近N日・本番モデルは上書きしない）."""
+    today = date.today()
+    end = today - timedelta(days=1)
+    start = end - timedelta(days=max(14, days) - 1)
+    path = model_path or SMOKE_MODEL_PATH
+    logger.info("smoke_retrain_start", start=start.isoformat(), end=end.isoformat())
+    return train_lgbm(
+        session,
+        train_start=start,
+        train_end=end - timedelta(days=7),
+        valid_start=end - timedelta(days=6),
+        valid_end=end,
+        model_path=path,
+        force_rebuild_cache=force_rebuild_cache,
+    )
+
+
 def retrain_all_before_today(
     session: Session,
     days: int | None = None,
     model_path: Path | None = None,
     start: date | None = None,
+    *,
+    force_rebuild_cache: bool = False,
+    skip_holdout: bool = False,
 ) -> TrainResult:
-    """検証後、本日以外の全期間で再学習して本番用モデルを保存。"""
+    """検証後、本日以外の全期間で再学習して本番用モデルを保存。
+
+    データセットは1回だけ構築し、holdout検証と最終学習で再利用する。
+    """
     today = date.today()
     end = today - timedelta(days=1)
     if start is None:
@@ -421,15 +490,37 @@ def retrain_all_before_today(
             start = date(2026, 1, 1)
         else:
             start = today - timedelta(days=days)
-    first = train_lgbm(
-        session,
-        train_start=start,
-        train_end=end - timedelta(days=7),
-        valid_start=end - timedelta(days=6),
-        valid_end=end,
-        model_path=model_path,
+
+    logger.info("build_full_dataset_once", start=start.isoformat(), end=end.isoformat())
+    samples, meta = build_dataset_cached(
+        session, start, end, force_rebuild=force_rebuild_cache
     )
-    samples, meta = build_dataset(session, start, end)
+    if not samples:
+        raise ValueError(f"no samples in {start}..{end}")
+
+    holdout_start = end - timedelta(days=6)
+    holdout_train = [s for s in samples if s.race_date < holdout_start]
+    holdout_valid = [s for s in samples if s.race_date >= holdout_start]
+    if not holdout_train or not holdout_valid:
+        cut = int(len(samples) * 0.85)
+        holdout_train, holdout_valid = samples[:cut], samples[cut:]
+
+    first_metrics: dict[str, Any] = {}
+    if not skip_holdout:
+        first = train_lgbm(
+            session,
+            train_start=start,
+            train_end=holdout_start - timedelta(days=1),
+            valid_start=holdout_start,
+            valid_end=end,
+            model_path=model_path,
+            samples=samples,  # 再ビルドしない
+        )
+        first_metrics = {
+            "holdout_valid": first.metrics.get("valid"),
+            "holdout_valid_no_ranker": first.metrics.get("valid_no_ranker"),
+        }
+
     cut = int(len(samples) * 0.85)
     train_s, valid_s = samples[:cut], samples[cut:]
     if not valid_s:
@@ -440,15 +531,20 @@ def retrain_all_before_today(
     )
     path = model_path or DEFAULT_MODEL_PATH
     metrics = {
-        "holdout_valid": first.metrics.get("valid"),
-        "holdout_valid_no_ranker": first.metrics.get("valid_no_ranker"),
+        **first_metrics,
         "final_train_race_hit": _race_hit_rate_multi(
-            train_s, win_model, top2_model, top3_model, ranker, fly_model=fly_model
+            train_s[-3000:] if len(train_s) > 3000 else train_s,
+            win_model,
+            top2_model,
+            top3_model,
+            ranker,
+            fly_model=fly_model,
         ),
         "final_tail_hit": _race_hit_rate_multi(
             valid_s, win_model, top2_model, top3_model, ranker, fly_model=fly_model
         ),
         "meta": meta,
+        "n_samples": len(samples),
     }
     joblib.dump(
         {

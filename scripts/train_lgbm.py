@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""LightGBM学習 → 本日をMLで再予想 → ルールベースと比較."""
+"""LightGBM学習 → 本日をMLで再予想 → ルールベースと比較.
+
+使い方:
+  python scripts/train_lgbm.py              # 本番フル再学習（キャッシュ利用）
+  python scripts/train_lgbm.py --smoke      # 直近45日の軽量検証（本番モデル非更新）
+  python scripts/train_lgbm.py --rebuild-cache
+  python scripts/train_lgbm.py --skip-holdout
+"""
 
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import date
 from pathlib import Path
@@ -15,7 +23,11 @@ from boatrace.db.models import PredictHistory, RaceCard
 from boatrace.db.session import session_scope
 from boatrace.learning.service import LearningService
 from boatrace.logging_setup import setup_logging
-from boatrace.models.train_lgbm import DEFAULT_MODEL_PATH, retrain_all_before_today
+from boatrace.models.train_lgbm import (
+    DEFAULT_MODEL_PATH,
+    retrain_all_before_today,
+    smoke_retrain,
+)
 from boatrace.prediction.service import PredictionService
 
 
@@ -55,13 +67,61 @@ def eval_today(session, model_name_filter: str | None = None) -> dict:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="LightGBM retrain")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="直近45日の軽量検証のみ（本番モデルは更新しない）",
+    )
+    parser.add_argument(
+        "--smoke-days",
+        type=int,
+        default=45,
+        help="--smoke 時の学習日数",
+    )
+    parser.add_argument(
+        "--rebuild-cache",
+        action="store_true",
+        help="特徴量キャッシュを無視して再構築",
+    )
+    parser.add_argument(
+        "--skip-holdout",
+        action="store_true",
+        help="holdout検証フェーズを飛ばして最終学習のみ",
+    )
+    parser.add_argument(
+        "--start",
+        type=str,
+        default="2026-01-01",
+        help="フル学習の開始日 YYYY-MM-DD",
+    )
+    args = parser.parse_args()
+
     setup_logging()
     migrate()
     today = date.today()
 
     with session_scope() as session:
-        print("=== train LightGBM (2026全期間 + ranker/条件付き着順) ===")
-        result = retrain_all_before_today(session, start=date(2026, 1, 1))
+        if args.smoke:
+            print(f"=== smoke retrain (last {args.smoke_days} days) ===")
+            result = smoke_retrain(
+                session,
+                days=args.smoke_days,
+                force_rebuild_cache=args.rebuild_cache,
+            )
+            print("model:", result.model_path)
+            print("metrics:", result.metrics)
+            print("top features:", list(result.feature_importance.items())[:10])
+            print("SMOKE_DONE (production model unchanged)")
+            return
+
+        print("=== train LightGBM (cached dataset + ranker) ===")
+        result = retrain_all_before_today(
+            session,
+            start=date.fromisoformat(args.start),
+            force_rebuild_cache=args.rebuild_cache,
+            skip_holdout=args.skip_holdout,
+        )
         print("model:", result.model_path)
         print("metrics:", result.metrics)
         print("top features:", list(result.feature_importance.items())[:10])
@@ -85,7 +145,17 @@ def main() -> None:
 
         learn = LearningService(session)
         acc = learn.evaluate_accuracy(today)
-        print("accuracy_daily_all:", next((s for s in acc["slices"] if s["slice_key"] == "all" and s["venue_id"] is None), None))
+        print(
+            "accuracy_daily_all:",
+            next(
+                (
+                    s
+                    for s in acc["slices"]
+                    if s["slice_key"] == "all" and s["venue_id"] is None
+                ),
+                None,
+            ),
+        )
 
         shown = 0
         for c in (
