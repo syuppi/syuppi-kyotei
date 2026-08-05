@@ -100,11 +100,21 @@ def prepare_and_predict(
 
     existing = _items_from_db(db, target, venue_id)
     if existing and not force:
+        # 予想キャッシュがあっても、着順未取得分は補完する
+        try:
+            from boatrace.collectors.official import OfficialCollector
+
+            filled = OfficialCollector().collect_missing_results(
+                target, venue_ids=venues
+            )
+        except Exception as e:  # noqa: BLE001
+            filled = {"error": str(e)}
+        items = _items_from_db(db, target, venue_id)
         return {
             "date": target.isoformat(),
-            "collected": {"skipped": True, "reason": "already_prepared"},
-            "count": len(existing),
-            "items": existing,
+            "collected": {"skipped": True, "reason": "already_prepared", "missing_results": filled},
+            "count": len(items),
+            "items": items,
             "fast": fast,
             "cached": True,
         }

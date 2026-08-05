@@ -78,6 +78,90 @@ class OfficialCollector(BaseCollector):
                 summary["errors"].append({"venue_id": vid, "error": str(e)})
         return summary
 
+    def collect_missing_results(
+        self,
+        race_date: date,
+        venue_ids: list[str] | None = None,
+        *,
+        workers: int = 6,
+    ) -> dict[str, Any]:
+        """既存カードのうち着順未取得のみ公式結果ページから埋める（高速）."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        from boatrace.db.session import session_scope
+
+        hd = race_date.strftime("%Y%m%d")
+        with session_scope() as session:
+            q = (
+                session.query(RaceCard)
+                .outerjoin(RaceResult, RaceResult.race_card_id == RaceCard.id)
+                .filter(RaceCard.race_date == race_date)
+                .filter((RaceResult.id.is_(None)) | (RaceResult.rank1_waku.is_(None)))
+            )
+            if venue_ids:
+                q = q.filter(RaceCard.venue_id.in_(venue_ids))
+            targets = [
+                (c.venue_id, c.race_no) for c in q.order_by(RaceCard.venue_id, RaceCard.race_no)
+            ]
+
+        if not targets:
+            return {
+                "date": race_date.isoformat(),
+                "targets": 0,
+                "updated": 0,
+                "skipped": 0,
+                "failed": 0,
+            }
+
+        def _fetch(pair: tuple[str, int]) -> tuple[str, int, dict[str, Any] | None]:
+            venue_id, rno = pair
+            local = OfficialCollector()
+            local.interval = 0.05
+            try:
+                result = local.fetch_result(hd, venue_id, rno)
+            except Exception:  # noqa: BLE001
+                return venue_id, rno, None
+            if not result or not result.get("rank1_waku"):
+                return venue_id, rno, None
+            return venue_id, rno, result
+
+        updated = skipped = failed = 0
+        fetched: list[tuple[str, int, dict[str, Any]]] = []
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(targets)))) as pool:
+            futs = [pool.submit(_fetch, t) for t in targets]
+            for fut in as_completed(futs):
+                try:
+                    venue_id, rno, result = fut.result()
+                except Exception:  # noqa: BLE001
+                    failed += 1
+                    continue
+                if result is None:
+                    skipped += 1
+                else:
+                    fetched.append((venue_id, rno, result))
+
+        # SQLite書き込みは直列
+        for venue_id, rno, result in fetched:
+            try:
+                self._upsert_result(race_date, venue_id, rno, result)
+                updated += 1
+            except Exception as e:  # noqa: BLE001
+                failed += 1
+                logger.debug(
+                    "missing_result_upsert_failed",
+                    venue=venue_id,
+                    rno=rno,
+                    error=str(e),
+                )
+
+        return {
+            "date": race_date.isoformat(),
+            "targets": len(targets),
+            "updated": updated,
+            "skipped": skipped,
+            "failed": failed,
+        }
+
     def collect_venue_day(self, race_date: date, venue_id: str) -> dict[str, int]:
         hd = race_date.strftime("%Y%m%d")
         race_nos = self._discover_race_nos(hd, venue_id)

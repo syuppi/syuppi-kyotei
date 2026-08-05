@@ -283,7 +283,6 @@ class OpenApiCollector(BaseCollector):
 
             racers_res = (result or {}).get("racers") or {}
             if racers_res:
-                result_n = 1
                 by_place: dict[int, int] = {}
                 entry_results: list[dict[str, Any]] = []
                 for _waku, rr in racers_res.items():
@@ -302,27 +301,30 @@ class OpenApiCollector(BaseCollector):
                         }
                     )
 
-                rr_row = (
-                    session.query(RaceResult)
-                    .filter_by(race_card_id=card.id)
-                    .one_or_none()
-                )
-                if rr_row is None:
-                    rr_row = RaceResult(race_card_id=card.id)
-                    session.add(rr_row)
-                rr_row.rank1_waku = by_place.get(1)
-                rr_row.rank2_waku = by_place.get(2)
-                rr_row.rank3_waku = by_place.get(3)
-                tech = result.get("technique_number_source") or TECHNIQUE_MAP.get(
-                    result.get("technique_number")
-                )
-                rr_row.kimarite = tech
-                rr_row.payouts = result.get("payouts")
-                rr_row.entry_results = entry_results
-                rr_row.fetched_at = now
-                rr_row.updated_at = now
-                card.status = "finished"
-                card.updated_at = now
+                # 着順が揃っていないのに finished / 空の RaceResult を作らない
+                if by_place.get(1) is not None:
+                    result_n = 1
+                    rr_row = (
+                        session.query(RaceResult)
+                        .filter_by(race_card_id=card.id)
+                        .one_or_none()
+                    )
+                    if rr_row is None:
+                        rr_row = RaceResult(race_card_id=card.id)
+                        session.add(rr_row)
+                    rr_row.rank1_waku = by_place.get(1)
+                    rr_row.rank2_waku = by_place.get(2)
+                    rr_row.rank3_waku = by_place.get(3)
+                    tech = result.get("technique_number_source") or TECHNIQUE_MAP.get(
+                        result.get("technique_number")
+                    )
+                    rr_row.kimarite = tech
+                    rr_row.payouts = result.get("payouts")
+                    rr_row.entry_results = entry_results
+                    rr_row.fetched_at = now
+                    rr_row.updated_at = now
+                    card.status = "finished"
+                    card.updated_at = now
 
         return card_n, entry_n, preview_n, result_n
 

@@ -86,6 +86,13 @@ def collect_daily(
             logger.exception("tide_collect_error", date=d.isoformat(), error=str(e))
             day["tide_error"] = str(e)
 
+        # 着順未取得を公式HTMLで補完（OpenAPIが空結果を返すケース対策）
+        try:
+            day["missing_results"] = official.collect_missing_results(d, venue_ids=venue_ids)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("missing_results_failed", date=d.isoformat(), error=str(e))
+            day["missing_results_error"] = str(e)
+
         day["primary_source"] = used
         results["days"].append(day)
         logger.info("collect_done", date=d.isoformat(), primary=used)
@@ -118,6 +125,15 @@ def prepare_day(
             summary["steps"]["official"] = OfficialCollector().collect(target, venue_ids=venue_ids)
         except Exception as e2:  # noqa: BLE001
             summary["steps"]["official_error"] = str(e2)
+
+    # OpenAPIで着順が欠けることがあるため、未取得分は公式結果で補完
+    try:
+        summary["steps"]["missing_results"] = OfficialCollector().collect_missing_results(
+            target, venue_ids=venue_ids
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("prepare_missing_results_failed", date=target.isoformat(), error=str(e))
+        summary["steps"]["missing_results_error"] = str(e)
 
     try:
         summary["steps"]["turnmark_odds"] = turnmark.collect(target, venue_ids=venue_ids)
