@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -11,6 +12,12 @@ from fastapi.templating import Jinja2Templates
 
 from boatrace.api.routes import accuracy, collect, predictions, search, venues
 from boatrace.config import get_settings
+from boatrace.jobs.result_refresh import (
+    last_refresh,
+    missing_result_stats,
+    start_background_refresh,
+    stop_background_refresh,
+)
 from boatrace.logging_setup import setup_logging
 
 setup_logging()
@@ -19,7 +26,18 @@ settings = get_settings()
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
-app = FastAPI(title=settings.api.title, version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # 10分ごとに当日・前日の着順欠損を自動補完（手動修正待ちを減らす）
+    start_background_refresh(interval_sec=600)
+    try:
+        yield
+    finally:
+        stop_background_refresh()
+
+
+app = FastAPI(title=settings.api.title, version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
 app.include_router(predictions.router, prefix="/api", tags=["predictions"])
@@ -50,5 +68,10 @@ def search_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict:
+    stats = missing_result_stats(days=2)
+    return {
+        "status": "ok",
+        "missing_results": stats,
+        "last_result_refresh": last_refresh() or None,
+    }

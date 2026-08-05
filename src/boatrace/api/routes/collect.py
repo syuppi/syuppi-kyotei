@@ -130,3 +130,13 @@ def prepare_and_predict(
         "fast": fast,
         "cached": False,
     }
+
+
+@router.post("/results/refresh")
+def refresh_missing_results(
+    days: int = Query(2, ge=1, le=7, description="直近何日分の欠損着順を埋めるか"),
+) -> dict:
+    """着順欠損だけを公式HTMLから補完（全件再取得しない高速パス）."""
+    from boatrace.jobs.result_refresh import refresh_recent_missing
+
+    return refresh_recent_missing(days=days)
