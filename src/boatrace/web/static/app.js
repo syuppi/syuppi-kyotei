@@ -54,12 +54,10 @@ async function fillActiveVenues(selectEl, day, opts = {}) {
 
   // 全場の自信ありだけ見るショートカット
   const confTotal = Number(data.confident_total || 0);
-  if (confTotal > 0 || !confidentOnly) {
+  if (confTotal > 0) {
     const allConf = document.createElement("option");
     allConf.value = "__all_confident__";
-    allConf.textContent = confTotal > 0
-      ? `自信あり（全場・${confTotal}R）`
-      : "自信あり（全場）";
+    allConf.textContent = `自信あり（全場・${confTotal}R）`;
     selectEl.appendChild(allConf);
   }
 
@@ -395,6 +393,14 @@ async function bootPredictions() {
       }
       _predCache = { data, prepared: prepareItems(data) };
       renderPredictions();
+      // 自信度を付与した直後に場リストの件数を更新
+      try {
+        const keep = venue.value;
+        await fillActiveVenues(venue, day.value, {
+          confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+        });
+        if (keep && [...venue.options].some((o) => o.value === keep)) venue.value = keep;
+      } catch (_) { /* ignore */ }
       const oddsN = (data.items || []).filter((x) => x.has_odds).length;
       const confN = (data.items || []).filter((x) => x.is_confident || x.confidence?.is_confident).length;
       const cached = data.cached ? "（キャッシュ）" : "";

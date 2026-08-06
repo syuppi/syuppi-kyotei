@@ -39,6 +39,10 @@ def predictions_today(
         q = q.filter(RaceCard.venue_id == venue_id)
     cards = q.order_by(RaceCard.venue_id, RaceCard.race_no).all()
     items = []
+    from boatrace.features.builder import FeatureBuilder
+    from boatrace.prediction.confidence import ensure_history_confidence
+
+    builder = FeatureBuilder(db)
     for card in cards:
         pred = (
             db.query(PredictHistory)
@@ -48,10 +52,15 @@ def predictions_today(
         )
         if not pred:
             continue
+        ensure_history_confidence(db, card, pred, persist=True, builder=builder)
         item = prediction_item_from_db(card, pred)
         if confident_only and not item.get("is_confident"):
             continue
         items.append(item)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
     return {
         "date": target.isoformat(),
         "count": len(items),

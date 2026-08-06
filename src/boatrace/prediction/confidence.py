@@ -690,6 +690,67 @@ def attach_confidence(
     return assessment
 
 
+def ensure_history_confidence(
+    session,
+    card,
+    pred,
+    *,
+    persist: bool = True,
+    builder=None,
+) -> bool:
+    """保存済み予想に自信度が無ければ付与する（未発走・確定済みどちらも可）.
+
+    Returns True if confidence was newly attached.
+    """
+    from boatrace.features.builder import FeatureBuilder
+    from boatrace.models.base import PredictionResult
+
+    snap = dict(pred.feature_snapshot or {})
+    if snap.get("confidence"):
+        return False
+    try:
+        fb = builder or FeatureBuilder(session)
+        features = fb.build(card.id)
+        win_probs = {
+            int(k): float(v) for k, v in (pred.win_probs or {}).items()
+        }
+        result = PredictionResult(
+            model_name=pred.model_name or "lgbm_v1",
+            rankings=list(pred.rankings or []),
+            win_probs=win_probs,
+            quinella_probs={
+                int(k): float(v) for k, v in (pred.quinella_probs or {}).items()
+            },
+            trio_probs={int(k): float(v) for k, v in (pred.trio_probs or {}).items()},
+            candidates_win=list(pred.candidates_win or []),
+            candidates_quinella=list(pred.candidates_quinella or []),
+            candidates_trio=list(pred.candidates_trio or []),
+            upset_candidates=list(pred.upset_candidates or []),
+            has_upset=bool(pred.has_upset),
+            reasons={int(k): v for k, v in (pred.reasons or {}).items()}
+            if pred.reasons
+            else {},
+            scores={int(k): float(v) for k, v in (pred.scores or {}).items()}
+            if pred.scores
+            else {},
+            feature_snapshot=snap,
+            tickets=snap.get("tickets") or {},
+        )
+        attach_confidence(features, result)
+        pred.feature_snapshot = result.feature_snapshot
+        if persist:
+            session.add(pred)
+            session.flush()
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "ensure_history_confidence_failed",
+            race_card_id=getattr(card, "id", None),
+            error=str(e),
+        )
+        return False
+
+
 def train_confidence_model(
     X: np.ndarray,
     y: np.ndarray,

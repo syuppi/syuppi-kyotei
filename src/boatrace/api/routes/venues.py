@@ -70,12 +70,10 @@ def list_venues(
             venue_ids = [vid for vid in venue_ids if conf_counts.get(vid, 0) > 0]
         rows = (
             db.query(Venue)
-            .filter(Venue.id.in_(venue_ids) if venue_ids else False)
+            .filter(Venue.id.in_(venue_ids))
             .order_by(Venue.id)
             .all()
-            if venue_ids
-            else []
-        )
+        ) if venue_ids else []
         items = [
             {
                 "id": v.id,
