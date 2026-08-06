@@ -161,6 +161,105 @@ def make_ticket_rows(
     return rows
 
 
+_ROLE_BY_RANK: dict[int, dict[str, str]] = {
+    1: {
+        "role": "honmei",
+        "role_label": "本命",
+        "style": "nobu",
+        "style_label": "ノブ型（的中）",
+    },
+    2: {
+        "role": "taikou",
+        "role_label": "対抗",
+        "style": "nobu",
+        "style_label": "ノブ型（的中）",
+    },
+    3: {
+        "role": "ana",
+        "role_label": "穴",
+        "style": "wonder",
+        "style_label": "ワンダー型（展開）",
+    },
+}
+
+
+def _short_why_for_row(
+    row: dict[str, Any],
+    *,
+    kind: str,
+    fly_risk: float,
+    upset_candidates: list[int] | None,
+    honmei_combo: list[int] | None,
+) -> str:
+    combo = [int(x) for x in (row.get("combo") or [])]
+    role = row.get("role")
+    if role == "honmei":
+        if kind == "win":
+            return f"{combo[0]}号艇を軸に的中重視で厚く見る"
+        return f"{'-'.join(map(str, combo))} を本線（実績・コース重視）"
+    if role == "taikou":
+        if honmei_combo and combo and set(combo) == set(honmei_combo) and combo != honmei_combo:
+            return "同軸のヒモ違いで保険"
+        if honmei_combo and combo and combo[0] == honmei_combo[0]:
+            return "本命と同軸の軽微な展開代替"
+        return "本命に次ぐ実力帯の対抗候補"
+    # ana / wonder
+    head = combo[0] if combo else None
+    ups = set(upset_candidates or [])
+    if fly_risk >= 0.45 and head and head >= 2:
+        if head >= 4:
+            return f"1号艇飛びリスク高め（{fly_risk:.0%}）→外枠頭の展開崩れ"
+        return f"1号艇飛びリスク高め（{fly_risk:.0%}）→{head}号頭の展開崩れ"
+    if head is not None and head in ups:
+        return "穴候補艇を頭にした展開狙い"
+    if head is not None and head >= 4:
+        return "外枠頭のワンダー型・展開崩れ狙い"
+    return "本命崩れ時の保険の流し"
+
+
+def annotate_ticket_roles(
+    tickets: dict[str, Any] | None,
+    *,
+    fly_risk: float = 0.0,
+    upset_candidates: list[int] | None = None,
+) -> dict[str, Any]:
+    """3候補に本命/対抗/穴とノブ/ワンダー意味付けを付与."""
+    out: dict[str, Any] = {}
+    if not tickets:
+        return out
+    for kind in ("win", "sanrenpuku", "sanrentan"):
+        rows = list(tickets.get(kind) or [])
+        honmei_combo: list[int] | None = None
+        annotated: list[dict[str, Any]] = []
+        for row in rows:
+            r = dict(row)
+            rank = int(r.get("rank") or (len(annotated) + 1))
+            meta = _ROLE_BY_RANK.get(rank, _ROLE_BY_RANK[3])
+            r.update(meta)
+            if rank == 1:
+                honmei_combo = [int(x) for x in (r.get("combo") or [])]
+            # 3連の3本目はワンダー固定。単勝3位も穴扱い。
+            if rank == 3:
+                r["style"] = "wonder"
+                r["style_label"] = "ワンダー型（展開）"
+                r["role"] = "ana"
+                r["role_label"] = "穴"
+            r["why_short"] = _short_why_for_row(
+                r,
+                kind=kind,
+                fly_risk=float(fly_risk or 0.0),
+                upset_candidates=upset_candidates,
+                honmei_combo=honmei_combo,
+            )
+            annotated.append(r)
+        out[kind] = annotated
+    # その他キーはそのまま
+    for k, v in tickets.items():
+        if k not in out:
+            out[k] = v
+    return out
+
+
 def select_diverse_trifectas(
     ordered: list[tuple[tuple[int, int, int], float]],
     *,

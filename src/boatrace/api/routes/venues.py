@@ -2,19 +2,62 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from datetime import date, datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from boatrace.db.models import Venue, VenueBias, VenueCourseStats
+from boatrace.db.models import RaceCard, Venue, VenueBias, VenueCourseStats
 from boatrace.db.session import get_db
 
 router = APIRouter()
 
 
 @router.get("/venues")
-def list_venues(db: Session = Depends(get_db)) -> dict:
+def list_venues(
+    day: Optional[str] = Query(None, description="YYYY-MM-DD。指定時はその日開催場のみ"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """場一覧。day 指定時は RaceCard がある開催場だけ返す。"""
+    if day:
+        target = datetime.strptime(day, "%Y-%m-%d").date()
+        counts = dict(
+            db.query(RaceCard.venue_id, func.count(RaceCard.id))
+            .filter(RaceCard.race_date == target)
+            .group_by(RaceCard.venue_id)
+            .all()
+        )
+        if not counts:
+            return {"day": target.isoformat(), "items": [], "active_only": True}
+        rows = (
+            db.query(Venue)
+            .filter(Venue.id.in_(list(counts.keys())))
+            .order_by(Venue.id)
+            .all()
+        )
+        return {
+            "day": target.isoformat(),
+            "active_only": True,
+            "items": [
+                {
+                    "id": v.id,
+                    "name": v.name,
+                    "prefecture": v.prefecture,
+                    "tide_sensitive": v.tide_sensitive,
+                    "water_type": v.water_type,
+                    "tide_station": v.tide_station,
+                    "typical_in_advantage": v.typical_in_advantage,
+                    "race_count": int(counts.get(v.id) or 0),
+                }
+                for v in rows
+            ],
+        }
+
     rows = db.query(Venue).order_by(Venue.id).all()
     return {
+        "active_only": False,
         "items": [
             {
                 "id": v.id,
@@ -26,7 +69,7 @@ def list_venues(db: Session = Depends(get_db)) -> dict:
                 "typical_in_advantage": v.typical_in_advantage,
             }
             for v in rows
-        ]
+        ],
     }
 
 

@@ -179,6 +179,57 @@ input, select {
   background: rgba(62, 207, 173, 0.22);
   color: var(--accent);
 }
+.badge.role-honmei {
+  background: rgba(62, 207, 173, 0.22);
+  color: var(--accent);
+}
+.badge.role-taikou {
+  background: rgba(120, 170, 210, 0.2);
+  color: #9ec9e8;
+}
+.badge.role-ana {
+  background: rgba(240, 180, 41, 0.18);
+  color: var(--accent-2);
+}
+.race-thesis {
+  margin: 0.65rem 0 0.2rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(62, 207, 173, 0.06);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.race-thesis strong {
+  display: block;
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.25rem;
+}
+.race-thesis p { margin: 0; color: #c7dbe0; }
+.why-short {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+  line-height: 1.4;
+}
+.ticket-why {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: #c7dbe0;
+}
+.ticket-why summary {
+  cursor: pointer;
+  color: var(--accent);
+  list-style: none;
+}
+.ticket-why ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1rem;
+  line-height: 1.45;
+}
+.ticket-line { line-height: 1.45; }
 .check-label {
   flex-direction: row;
   align-items: center;

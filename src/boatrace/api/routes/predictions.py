@@ -75,6 +75,9 @@ def predictions_today(
                 "scenario_detail": (pred.feature_snapshot or {}).get("scenarios"),
                 "ev_reasons": (pred.feature_snapshot or {}).get("ev_reasons") or [],
                 "has_odds": bool((pred.feature_snapshot or {}).get("has_odds")),
+                "race_thesis": (pred.feature_snapshot or {}).get("race_thesis") or "",
+                "ticket_reasons": (pred.feature_snapshot or {}).get("ticket_reasons") or {},
+                "styles": (pred.feature_snapshot or {}).get("styles") or {},
                 "sanrentan": [
                     t.get("combo")
                     for t in ((pred.feature_snapshot or {}).get("tickets") or {}).get(
@@ -182,6 +185,9 @@ def prediction_detail(race_card_id: int, db: Session = Depends(get_db)) -> dict:
             else None,
             "scenario_detail": (pred.feature_snapshot or {}).get("scenarios") if pred else None,
             "tickets": (pred.feature_snapshot or {}).get("tickets") if pred else None,
+            "race_thesis": (pred.feature_snapshot or {}).get("race_thesis") if pred else None,
+            "ticket_reasons": (pred.feature_snapshot or {}).get("ticket_reasons") if pred else None,
+            "styles": (pred.feature_snapshot or {}).get("styles") if pred else None,
         },
         "result": {
             "rank1": card.result.rank1_waku if card.result else None,

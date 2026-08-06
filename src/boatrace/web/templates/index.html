@@ -4,12 +4,12 @@
 <section class="hero-panel">
   <p class="eyebrow">Daily Predictions</p>
   <h1>本日の各レース予測</h1>
-  <p class="lede">単勝・3連複・3連単の候補にオッズと期待値（EV）を反映します。日付を変えると出走表取得→予想まで自動実行します。</p>
+  <p class="lede">場を選んでから解析します。単勝・3連複・3連単は本命（ノブ型）／対抗／穴（ワンダー型）と根拠付きで表示します。</p>
   <div class="controls">
     <label>日付 <input type="date" id="day" /></label>
     <label>場
       <select id="venue">
-        <option value="">すべて</option>
+        <option value="">場を選択…</option>
       </select>
     </label>
     <label>表示
@@ -35,7 +35,7 @@
       <span>コンパクト</span>
       <input type="checkbox" id="compact-mode" checked />
     </label>
-    <button id="refresh" class="btn">取得して予想</button>
+    <button id="refresh" class="btn" disabled>この場を解析</button>
   </div>
   <p id="load-status" class="meta" style="margin-top:0.6rem"></p>
 </section>
@@ -44,7 +44,7 @@
 <section id="list" class="race-list" aria-live="polite"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=fix524-2"></script>
+<script src="/static/app.js?v=venue-narrative-1"></script>
 <script>
   bootPredictions();
 </script>

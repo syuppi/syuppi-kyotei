@@ -13,8 +13,10 @@ from boatrace.features.builder import FeatureBuilder
 from boatrace.features.exhibition import exhibition_status
 from boatrace.logging_setup import get_logger
 from boatrace.models.base import BasePredictor, PredictionResult
+from boatrace.models.combinations import annotate_ticket_roles
 from boatrace.models.ml_model import MLPredictor
 from boatrace.models.scoring import ScoringPredictor
+from boatrace.prediction.narrative import build_race_narrative
 from boatrace.prediction.scenarios import build_exhibition_scenarios
 
 logger = get_logger(__name__)
@@ -106,6 +108,30 @@ class PredictionService:
                         result.reasons[waku] = list(ev_reasons) + list(msgs)
         except Exception as e:  # noqa: BLE001
             logger.warning("odds_ev_enrich_failed", race_card_id=race_card_id, error=str(e))
+
+        # 本命/対抗/穴ラベル + 日本語根拠
+        try:
+            fly_risk = float(
+                (result.feature_snapshot or {}).get("course1_fly_risk")
+                or features.env.get("course1_fly_risk")
+                or 0.0
+            )
+            labeled = annotate_ticket_roles(
+                result.tickets or (result.feature_snapshot or {}).get("tickets"),
+                fly_risk=fly_risk,
+                upset_candidates=list(result.upset_candidates or []),
+            )
+            result.tickets = labeled
+            result.feature_snapshot = dict(result.feature_snapshot or {})
+            result.feature_snapshot["tickets"] = labeled
+            narrative = build_race_narrative(features, result)
+            result.feature_snapshot["race_thesis"] = narrative["race_thesis"]
+            result.feature_snapshot["ticket_reasons"] = narrative["ticket_reasons"]
+            result.feature_snapshot["styles"] = narrative["styles"]
+            # narrative が why_short を更新した tickets を再保存
+            result.tickets = result.feature_snapshot.get("tickets") or labeled
+        except Exception as e:  # noqa: BLE001
+            logger.warning("narrative_annotate_failed", race_card_id=race_card_id, error=str(e))
 
         if persist:
             self._save(race_card_id, result)
@@ -210,4 +236,7 @@ class PredictionService:
             "scenario_detail": snap.get("scenarios"),
             "ev_reasons": snap.get("ev_reasons") or [],
             "has_odds": bool(snap.get("has_odds")),
+            "race_thesis": snap.get("race_thesis") or "",
+            "ticket_reasons": snap.get("ticket_reasons") or {},
+            "styles": snap.get("styles") or {},
         }

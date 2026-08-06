@@ -63,6 +63,9 @@ def _items_from_db(db: Session, target: date, venue_id: str | None) -> list[dict
                 "scenario_detail": snap.get("scenarios"),
                 "ev_reasons": snap.get("ev_reasons") or [],
                 "has_odds": bool(snap.get("has_odds")),
+                "race_thesis": snap.get("race_thesis") or "",
+                "ticket_reasons": snap.get("ticket_reasons") or {},
+                "styles": snap.get("styles") or {},
                 "sanrentan": [
                     t.get("combo") for t in tickets.get("sanrentan", []) if t.get("combo")
                 ]

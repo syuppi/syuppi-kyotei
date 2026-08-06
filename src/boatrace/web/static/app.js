@@ -18,8 +18,13 @@ function todayISO() {
 
 async function fillVenues(selectEl, includeAll = true) {
   const data = await jget("/api/venues");
+  const keep = selectEl.value;
+  selectEl.innerHTML = "";
   if (includeAll) {
-    // keep existing all option if present
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "すべて";
+    selectEl.appendChild(all);
   }
   for (const v of data.items) {
     const opt = document.createElement("option");
@@ -27,6 +32,35 @@ async function fillVenues(selectEl, includeAll = true) {
     opt.textContent = `${v.id} ${v.name}`;
     selectEl.appendChild(opt);
   }
+  if (keep && [...selectEl.options].some((o) => o.value === keep)) {
+    selectEl.value = keep;
+  }
+}
+
+/** 指定日の開催場だけをセレクトに入れる（非開催場は出さない） */
+async function fillActiveVenues(selectEl, day) {
+  const prev = selectEl.value;
+  const data = await jget(`/api/venues?day=${encodeURIComponent(day)}`);
+  selectEl.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = (data.items && data.items.length)
+    ? "場を選択…"
+    : "この日の開催場がありません";
+  selectEl.appendChild(placeholder);
+  for (const v of data.items || []) {
+    const opt = document.createElement("option");
+    opt.value = v.id;
+    const n = v.race_count != null ? `（${v.race_count}R）` : "";
+    opt.textContent = `${v.id} ${v.name}${n}`;
+    selectEl.appendChild(opt);
+  }
+  if (prev && [...selectEl.options].some((o) => o.value === prev)) {
+    selectEl.value = prev;
+  } else {
+    selectEl.value = "";
+  }
+  return data;
 }
 
 function fillShares(rows) {
@@ -183,21 +217,58 @@ async function bootPredictions() {
   const sortEl = document.getElementById("hit-sort");
   const compactEl = document.getElementById("compact-mode");
   const statusEl = document.getElementById("load-status");
+  const list = document.getElementById("list");
+  const summary = document.getElementById("summary");
   day.value = todayISO();
-  await fillVenues(venue, true);
 
   function setStatus(msg) {
     if (statusEl) statusEl.textContent = msg || "";
   }
 
+  function setAnalyzeEnabled(on) {
+    if (refreshBtn) refreshBtn.disabled = !on;
+  }
+
+  function clearRaceView(msg) {
+    _predCache = { data: null, prepared: [] };
+    if (summary) summary.innerHTML = "";
+    if (list) {
+      list.innerHTML = `<p class="lede">${msg}</p>`;
+    }
+  }
+
+  async function refreshVenueOptions() {
+    setStatus("開催場を確認中…");
+    const data = await fillActiveVenues(venue, day.value);
+    const has = (data.items || []).length > 0;
+    setAnalyzeEnabled(Boolean(venue.value));
+    if (!has) {
+      clearRaceView("この日の開催場がありません。日付を変えるか、先に出走表を取得してください。");
+      setStatus("開催場なし");
+      return false;
+    }
+    if (!venue.value) {
+      clearRaceView("場を選択すると、その場だけ解析・表示します。");
+      setStatus(`${data.items.length}場が開催中 — 場を選んでください`);
+      return false;
+    }
+    return true;
+  }
+
   async function load(opts = {}) {
     const { refresh = false, prepare = false, force = false } = opts;
-    const params = new URLSearchParams({ day: day.value });
-    if (venue.value) params.set("venue_id", venue.value);
+    if (!venue.value) {
+      clearRaceView("場を選択すると、その場だけ解析・表示します。");
+      setStatus("場未選択");
+      setAnalyzeEnabled(false);
+      return;
+    }
+    setAnalyzeEnabled(true);
+    const params = new URLSearchParams({ day: day.value, venue_id: venue.value });
     try {
       let data;
       if (prepare) {
-        setStatus("出走表を取得して予想中…（高速モード）");
+        setStatus("出走表を取得して予想中…（この場のみ・高速モード）");
         const prep = new URLSearchParams(params);
         prep.set("fast", "true");
         if (force) prep.set("force", "true");
@@ -216,7 +287,6 @@ async function bootPredictions() {
           if (e.name === "AbortError") {
             throw new Error("タイムアウト（処理が長すぎます。もう一度お試しください）");
           }
-          // 524/502 などは既存データ表示にフォールバック
           const msg = String(e.message || e);
           setStatus(`${msg} → 保存済み予想を表示します`);
           data = await jget(`/api/predictions/today?${params}`);
@@ -229,7 +299,7 @@ async function bootPredictions() {
         setStatus("読み込み中…");
         data = await jget(`/api/predictions/today?${params}`);
         if (!data.items || data.items.length === 0) {
-          setStatus("データが無いため取得・予想しています…");
+          setStatus("データが無いためこの場を取得・予想しています…");
           const prep = new URLSearchParams(params);
           prep.set("fast", "true");
           const controller = new AbortController();
@@ -250,13 +320,18 @@ async function bootPredictions() {
                 : (e.message || e)
             );
           }
+          // prepare 後に場一覧も更新（カードが増えた場合）
+          await fillActiveVenues(venue, day.value);
+          if (params.get("venue_id") && [...venue.options].some((o) => o.value === params.get("venue_id"))) {
+            venue.value = params.get("venue_id");
+          }
         }
       }
       _predCache = { data, prepared: prepareItems(data) };
       renderPredictions();
       const oddsN = (data.items || []).filter((x) => x.has_odds).length;
       const cached = data.cached ? "（キャッシュ）" : "";
-      setStatus(`更新済${cached}（${data.count || 0}R / オッズあり ${oddsN}R）`);
+      setStatus(`更新済${cached}（${venue.value} / ${data.count || 0}R / オッズあり ${oddsN}R）`);
     } catch (e) {
       setStatus(`エラー: ${e.message || e}`);
       throw e;
@@ -264,13 +339,21 @@ async function bootPredictions() {
   }
 
   refreshBtn.addEventListener("click", () => load({ prepare: true, force: true }));
-  day.addEventListener("change", () => load({ prepare: false }));
-  venue.addEventListener("change", () => load({ prepare: false }));
+  day.addEventListener("change", async () => {
+    const ok = await refreshVenueOptions();
+    if (ok) await load({ prepare: false });
+  });
+  venue.addEventListener("change", () => {
+    setAnalyzeEnabled(Boolean(venue.value));
+    if (venue.value) load({ prepare: false });
+    else clearRaceView("場を選択すると、その場だけ解析・表示します。");
+  });
   if (filterEl) filterEl.addEventListener("change", () => renderPredictions());
   if (sortEl) sortEl.addEventListener("change", () => renderPredictions());
   if (compactEl) compactEl.addEventListener("change", () => renderPredictions());
-  // 初回: あれば表示、無ければ高速取得
-  await load({ prepare: false });
+
+  const ready = await refreshVenueOptions();
+  if (ready) await load({ prepare: false });
 }
 
 function renderPredictions() {
@@ -319,6 +402,25 @@ function renderPredictions() {
     const evReasons = (item.ev_reasons || []).slice(0, 3)
       .map((r) => `<div class="ev-reason">・ ${r}</div>`).join("");
     const oddsBadge = item.has_odds ? '<span class="badge hit">オッズ反映</span>' : '<span class="badge upset">オッズ未取得</span>';
+    const thesis = item.race_thesis
+      ? `<div class="race-thesis"><strong>展開の読み</strong><p>${item.race_thesis}</p></div>`
+      : "";
+    const ticketReasons = item.ticket_reasons || {};
+
+    const reasonDetails = (kind, t) => {
+      const rows = ticketReasons[kind] || [];
+      const match = rows.find((r) => r.label === t.label || (r.role && r.role === t.role && String(r.label) === String(t.label)));
+      const byRole = rows.find((r) => r.role === t.role);
+      const block = match || byRole;
+      const bullets = block?.bullets || [];
+      if (compact) {
+        const short = t.why_short || block?.why_short || "";
+        return short ? `<div class="why-short">${short}</div>` : "";
+      }
+      if (!bullets.length && !t.why_short) return "";
+      const lis = (bullets.length ? bullets : [t.why_short]).map((b) => `<li>${b}</li>`).join("");
+      return `<details class="ticket-why"><summary>根拠</summary><ul>${lis}</ul></details>`;
+    };
 
     const fmtTicket = (t, kind) => {
       const share = Math.round((Number(t.stake_share) || 0) * 100);
@@ -345,7 +447,15 @@ function renderPredictions() {
         : (t.value_tag === "割高" ? ' <span class="badge upset">割高</span>' : "");
       const oddsTxt = odd != null ? ` / オッズ${odd.toFixed(1)}` : "";
       const evTxt = ev != null ? ` / EV${ev.toFixed(2)}` : "";
-      return `<li><strong>${t.label}</strong>${mark}${valueBadge} <span class="muted">確率${pct(pr)}${oddsTxt}${evTxt} / 配分${share}%</span></li>`;
+      const kindKey = kind === "trio" ? "sanrenpuku" : (kind === "tf" ? "sanrentan" : "win");
+      const prefix = t.role_label
+        ? `【${t.role_label}・${(t.style_label || "").replace(/型.*/, "型")}】`
+        : "";
+      return `<li>
+        <div class="ticket-line"><strong>${prefix}${t.label}</strong>${mark}${valueBadge}
+          <span class="muted">確率${pct(pr)}${oddsTxt}${evTxt} / 配分${share}%</span></div>
+        ${reasonDetails(kindKey, t)}
+      </li>`;
     };
     const ticketBlock = (title, rows, kind) => `
       <div class="ticket-block">
@@ -410,6 +520,7 @@ function renderPredictions() {
           </h2>
           ${resultHtml}
         </div>
+        ${thesis}
         <div class="wakus">${wakus}</div>
         <div class="ticket-grid">
           ${ticketBlock("単勝 候補", wins, "win")}
@@ -418,7 +529,7 @@ function renderPredictions() {
         </div>
         ${exTable}
         ${scenarioHtml}
-        <div class="reasons"><strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}
+        <div class="reasons">${item.race_thesis ? "" : `<strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}`}
           ${evReasons ? `<div class="ev-box"><strong>期待値の理由</strong>${evReasons}</div>` : ""}
           ${!compact && item.race_title ? `<div class="meta">番組: ${item.race_title}</div>` : ""}
         </div>
