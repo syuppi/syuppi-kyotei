@@ -152,5 +152,27 @@ def prepare_day(
         except Exception as e:  # noqa: BLE001
             summary["steps"]["tide_error"] = str(e)
 
+    # 前走情報・当日学習（的中改善の自己学習ループ）
+    try:
+        from boatrace.db.session import session_scope
+        from boatrace.features.previous_starts import backfill_previous_for_day
+        from boatrace.learning.service import LearningService
+
+        with session_scope() as session:
+            summary["steps"]["previous_starts"] = backfill_previous_for_day(
+                session, target, venue_ids=venue_ids
+            )
+            # 確定レースがあれば場傾向・重みを更新
+            learn = LearningService(session).learn_day(target)
+            summary["steps"]["learn"] = {
+                "date": learn.get("date"),
+                "course_stats_updated": learn.get("course_stats_updated"),
+                "bias_updated": learn.get("bias_updated"),
+            }
+            session.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("prepare_learn_failed", date=target.isoformat(), error=str(e))
+        summary["steps"]["learn_error"] = str(e)
+
     return summary
 
