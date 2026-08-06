@@ -89,6 +89,9 @@ class RaceSample:
 
 def _rank_desc(values: list[float | None]) -> list[float]:
     """大きいほど良い値のレース内順位を 0-1 に（1位=1.0）."""
+    known = [v for v in values if v is not None]
+    if not known:
+        return [0.5] * len(values)
     indexed = [(i, v if v is not None else -1e9) for i, v in enumerate(values)]
     indexed.sort(key=lambda x: x[1], reverse=True)
     out = [0.5] * len(values)
@@ -100,6 +103,9 @@ def _rank_desc(values: list[float | None]) -> list[float]:
 
 def _rank_asc(values: list[float | None]) -> list[float]:
     """小さいほど良い値のレース内順位."""
+    known = [v for v in values if v is not None]
+    if not known:
+        return [0.5] * len(values)
     indexed = [(i, v if v is not None else 1e9) for i, v in enumerate(values)]
     indexed.sort(key=lambda x: x[1])
     out = [0.5] * len(values)

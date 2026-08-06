@@ -648,6 +648,7 @@ function renderPredictions() {
           <h2>${item.venue_name} ${item.race_no}R <span class="badge">${item.model_name || ""}</span>
             ${oddsBadge}
             ${confBadge}
+            ${(item.pre_exhibition_mode || item.exhibition?.phase === "試走前" || (item.exhibition && item.exhibition.complete === false)) ? '<span class="badge" title="展示タイム未反映。級別・モーター・選手・場傾向で予想">展示前</span>' : ""}
             ${item.has_upset ? '<span class="badge upset">穴あり</span>' : ""}
             ${item.status === "scheduled" ? '<span class="badge">予想中</span>' : ""}
           </h2>

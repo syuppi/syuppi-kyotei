@@ -22,6 +22,8 @@ def _intra_ranks(features: RaceFeatures) -> dict[str, list[float]]:
     boats = features.boats
 
     def rank_asc(vals: list[float | None]) -> list[float]:
+        if not any(v is not None for v in vals):
+            return [0.5] * len(vals)
         indexed = [(i, v if v is not None else 1e9) for i, v in enumerate(vals)]
         indexed.sort(key=lambda x: x[1])
         out = [0.5] * len(vals)
@@ -31,6 +33,8 @@ def _intra_ranks(features: RaceFeatures) -> dict[str, list[float]]:
         return out
 
     def rank_desc(vals: list[float | None]) -> list[float]:
+        if not any(v is not None for v in vals):
+            return [0.5] * len(vals)
         indexed = [(i, v if v is not None else -1e9) for i, v in enumerate(vals)]
         indexed.sort(key=lambda x: x[1], reverse=True)
         out = [0.5] * len(vals)
@@ -131,6 +135,11 @@ class MLPredictor(BasePredictor):
             return None
 
     def predict(self, features: RaceFeatures) -> PredictionResult:
+        from boatrace.features.pre_exhibition import prepare_features_for_predict
+
+        features, phase = prepare_features_for_predict(features)
+        pre_mode = bool(phase.get("pre_exhibition_mode"))
+
         scored = self.fallback.predict(features)
         if self.win_model is None or len(features.boats) != 6:
             scored.model_name = self.name + "_fallback"
@@ -152,8 +161,17 @@ class MLPredictor(BasePredictor):
         raw_sum = float(np.sum(win_raw)) or 1.0
         ml_map = {w: float(win_raw[i] / raw_sum) for i, w in enumerate(wakus)}
 
-        # ルールベースはコース偏りが強いのでブレンドしない（実力信号を維持）
-        strength_probs = dict(ml_map)
+        # 展示前は実力系スコアリングとブレンドして展示欠損の歪みを抑える
+        if pre_mode:
+            alpha = 0.52  # ML寄りすぎると展示特徴欠損の歪みが残る
+            strength_probs = {
+                w: alpha * ml_map[w] + (1.0 - alpha) * float(scored.win_probs.get(w, 0.0))
+                for w in wakus
+            }
+            s = sum(strength_probs.values()) or 1.0
+            strength_probs = {w: v / s for w, v in strength_probs.items()}
+        else:
+            strength_probs = dict(ml_map)
 
         # 飛びリスク: 専用モデルがあれば優先（ヒューリスティックと軽くブレンド）
         heuristic_fly = float(features.env.get("course1_fly_risk") or 0.0)
@@ -212,6 +230,7 @@ class MLPredictor(BasePredictor):
             top3_probs=top3_probs,
             limit=3,
         )
+        bens = [] if pre_mode else (delay_info.get("beneficiaries") or [])
         bundle = build_combination_bundle(
             combo_win,
             top2_probs,
@@ -221,23 +240,24 @@ class MLPredictor(BasePredictor):
             n_win=cfg.win_candidates,
             n_sanrenpuku=cfg.sanrenpuku_candidates,
             n_sanrentan=cfg.sanrentan_candidates,
-            prior_weight=0.03,
+            prior_weight=0.15 if pre_mode else 0.03,
             fly_risk=fly_risk,
-            delay_beneficiaries=delay_info.get("beneficiaries") or [],
+            delay_beneficiaries=bens,
         )
         # 1着順位は勝率モデルを正とする（3連単本命の1着固定を避ける）
         rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
         quinella = bundle["top2_probs"]
         trio = bundle["top3_probs"]
         tickets = bundle.get("tickets") or {}
-        tickets = inject_delay_ana_tickets(
-            tickets,
-            beneficiaries=delay_info.get("beneficiaries") or [],
-            favorite=rankings[0] if rankings else delay_info.get("favorite"),
-            top3_probs=top3_probs or trio,
-            strengths=bundle.get("strengths"),
-            fly_risk=fly_risk,
-        )
+        if not pre_mode:
+            tickets = inject_delay_ana_tickets(
+                tickets,
+                beneficiaries=delay_info.get("beneficiaries") or [],
+                favorite=rankings[0] if rankings else delay_info.get("favorite"),
+                top3_probs=top3_probs or trio,
+                strengths=bundle.get("strengths"),
+                fly_risk=fly_risk,
+            )
         # 単勝チケットも勝率順で揃える
         if tickets.get("win"):
             win_sorted = rankings[: cfg.win_candidates]
@@ -267,6 +287,8 @@ class MLPredictor(BasePredictor):
                 f"LightGBM勝率 {ml_map[boat.waku]*100:.1f}%",
                 f"ブレンド後1着 {win_probs[boat.waku]*100:.1f}%",
             ]
+            if pre_mode:
+                msgs.insert(0, "展示前モード: 級別・モーター・選手・場傾向を重視")
             if top2_probs:
                 msgs.append(f"2連対見込み {top2_probs[boat.waku]*100:.1f}%")
             if top3_probs:
@@ -291,10 +313,13 @@ class MLPredictor(BasePredictor):
         has_upset = margin < get_settings().prediction.upset_margin_threshold
         upset = [w for w in rankings[1:4] if w >= 4] if has_upset else []
         fav0 = rankings[0] if rankings else None
-        for w in delay_info.get("beneficiaries") or []:
-            if int(w) not in upset and fav0 != int(w):
-                upset.append(int(w))
-        has_upset = has_upset or fly_risk >= 0.40 or bool(delay_info.get("beneficiaries"))
+        if not pre_mode:
+            for w in delay_info.get("beneficiaries") or []:
+                if int(w) not in upset and fav0 != int(w):
+                    upset.append(int(w))
+            has_upset = has_upset or fly_risk >= 0.40 or bool(delay_info.get("beneficiaries"))
+        else:
+            has_upset = has_upset or fly_risk >= 0.45
 
         snap = dict(scored.feature_snapshot)
         snap["ml_raw"] = {str(w): float(v) for w, v in zip(wakus, win_raw)}
@@ -312,8 +337,10 @@ class MLPredictor(BasePredictor):
         snap["low_confidence"] = bundle.get("low_confidence")
         snap["top_trifecta_prob"] = bundle.get("top_trifecta_prob")
         snap["has_venue_prior"] = bool(venue_prior)
-        snap["delay_upset"] = delay_info
-        snap["delay_thesis"] = delay_info.get("thesis") or ""
+        snap["delay_upset"] = delay_info if not pre_mode else {"beneficiaries": [], "thesis": ""}
+        snap["delay_thesis"] = (delay_info.get("thesis") or "") if not pre_mode else ""
+        snap["pre_exhibition_mode"] = pre_mode
+        snap["exhibition"] = phase.get("exhibition") or snap.get("exhibition") or {}
 
         return PredictionResult(
             model_name=self.name,

@@ -341,14 +341,14 @@ def rule_based_score(feat: dict[str, float]) -> float:
     score += 0.07 * min(1.0, feat.get("top_trifecta_prob", 0.0) / 0.08)
     score += 0.06 * feat.get("exhibition_complete", 0.0)
     score += 0.05 * feat.get("fav_ex_clear", 0.0)
-    score += 0.05 * min(1.0, feat.get("motor_clear_gap", 0.0))
-    score += 0.05 * min(1.0, feat.get("grade_spread", 0.0) / 0.6)
-    score += 0.04 * feat.get("is_special_program", 0.0)
-    score += 0.03 * feat.get("is_finalish", 0.0)
-    score += 0.05 * feat.get("in_fav_alignment", 0.0)
-    score += 0.04 * feat.get("a1_on_course1", 0.0)
-    score += 0.04 * feat.get("wind_calm", 0.0)
-    score += 0.03 * feat.get("wind_tail", 0.0)
+    # 展示前でも実力差が明確なら自信を残す
+    if feat.get("exhibition_complete", 0) < 0.5:
+        score += 0.06 * min(1.0, feat.get("motor_clear_gap", 0.0))
+        score += 0.05 * min(1.0, feat.get("grade_spread", 0.0) / 0.55)
+        score += 0.05 * feat.get("in_fav_alignment", 0.0)
+        score += 0.04 * feat.get("a1_on_course1", 0.0)
+        score += 0.03 * feat.get("is_special_program", 0.0)
+        score += 0.03 * feat.get("wind_calm", 0.0)
     score -= 0.16 * min(1.0, feat.get("course1_fly_risk", 0.0))
     score -= 0.06 * feat.get("wind_head", 0.0)
     score -= 0.04 * feat.get("wind_cross", 0.0)
@@ -387,7 +387,9 @@ def explain_confidence(feat: dict[str, float], score: float) -> list[str]:
         reasons.append("優勝戦・準優級で実力上位が集まりやすい")
     elif feat.get("is_special_program", 0) >= 0.5:
         reasons.append("特選・選抜など公式が組みやすい番組")
-    if feat.get("fav_ex_clear", 0) >= 0.4 or (
+    if feat.get("exhibition_complete", 0) < 0.5:
+        reasons.append("展示前のため級別・モーター・選手・場傾向で判断")
+    elif feat.get("fav_ex_clear", 0) >= 0.4 or (
         feat.get("exhibition_complete", 0) >= 0.5 and feat.get("fav_ex_advantage", 0) > 0.05
     ):
         reasons.append("展示タイム・気配で本命が明確")

@@ -60,9 +60,10 @@ class PredictionService:
             result.feature_snapshot = dict(result.feature_snapshot or {})
             result.feature_snapshot["exhibition"] = exhibition["status"]
             result.feature_snapshot["scenarios"] = exhibition
-            # シナリオ上の本命遅れ受益艇を穴候補に合流
+            pre_mode = bool((result.feature_snapshot or {}).get("pre_exhibition_mode"))
+            # シナリオ上の本命遅れ受益艇を穴候補に合流（展示前は展示依存のためスキップ）
             scen_bens = exhibition.get("delay_beneficiaries") or []
-            if scen_bens:
+            if scen_bens and not pre_mode:
                 delay = dict(result.feature_snapshot.get("delay_upset") or {})
                 merged = list(dict.fromkeys(list(delay.get("beneficiaries") or []) + list(scen_bens)))
                 delay["beneficiaries"] = merged
@@ -93,8 +94,9 @@ class PredictionService:
                 prefixed = []
                 if status_line:
                     prefixed.append(f"試走状況: {status_line}")
-                prefixed.extend(extra[:1])
-                prefixed.extend(top_sc[:2])
+                if not pre_mode:
+                    prefixed.extend(extra[:1])
+                    prefixed.extend(top_sc[:2])
                 result.reasons[waku] = prefixed + list(msgs)
         except Exception as e:  # noqa: BLE001
             logger.warning("scenario_build_failed", race_card_id=race_card_id, error=str(e))
@@ -278,4 +280,5 @@ class PredictionService:
             "confidence": snap.get("confidence") or {},
             "is_confident": bool((snap.get("confidence") or {}).get("is_confident")),
             "confidence_score": (snap.get("confidence") or {}).get("score"),
+            "pre_exhibition_mode": bool(snap.get("pre_exhibition_mode")),
         }

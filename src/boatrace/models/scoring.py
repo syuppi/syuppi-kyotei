@@ -51,51 +51,67 @@ class ScoringPredictor(BasePredictor):
         return weights
 
     def predict(self, features: RaceFeatures) -> PredictionResult:
-        scores: dict[int, float] = {}
-        contribs: dict[int, dict[str, float]] = {}
-
-        for boat in features.boats:
-            total = 0.0
-            parts: dict[str, float] = {}
-            for key, weight in self.weights.items():
-                val = boat.values.get(key, 0.5)
-                c = weight * val
-                parts[key] = c
-                total += c
-            scores[boat.waku] = total
-            contribs[boat.waku] = parts
-
-        wakus = [b.waku for b in features.boats]
-        raw = [scores[w] for w in wakus]
-        win_list = softmax(raw, self.settings.prediction.temperature)
-        win_probs = {w: p for w, p in zip(wakus, win_list)}
-
-        quinella_probs = self._place_probs(win_probs, top_n=2)
-        trio_probs = self._place_probs(win_probs, top_n=3)
-        cfg = self.settings.prediction
-        from boatrace.prediction.delay_upset import (
-            compute_delay_beneficiaries,
-            inject_delay_ana_tickets,
+        from boatrace.features.pre_exhibition import (
+            prepare_features_for_predict,
+            pre_exhibition_scoring_weights,
         )
 
-        fly_risk = float(features.env.get("course1_fly_risk") or 0.0)
-        delay_info = compute_delay_beneficiaries(
-            features,
-            favorite=max(win_probs, key=win_probs.get) if win_probs else None,
-            win_probs=win_probs,
-            top3_probs=trio_probs,
-            limit=3,
-        )
-        bundle = build_combination_bundle(
-            win_probs,
-            quinella_probs,
-            trio_probs,
-            n_win=cfg.win_candidates,
-            n_sanrenpuku=cfg.sanrenpuku_candidates,
-            n_sanrentan=cfg.sanrentan_candidates,
-            fly_risk=fly_risk,
-            delay_beneficiaries=delay_info.get("beneficiaries") or [],
-        )
+        features, phase = prepare_features_for_predict(features)
+        pre_mode = bool(phase.get("pre_exhibition_mode"))
+        saved_weights = None
+        if pre_mode:
+            saved_weights = dict(self.weights)
+            self.weights = pre_exhibition_scoring_weights(self.weights)
+        try:
+            scores: dict[int, float] = {}
+            contribs: dict[int, dict[str, float]] = {}
+
+            for boat in features.boats:
+                total = 0.0
+                parts: dict[str, float] = {}
+                for key, weight in self.weights.items():
+                    val = boat.values.get(key, 0.5)
+                    c = weight * val
+                    parts[key] = c
+                    total += c
+                scores[boat.waku] = total
+                contribs[boat.waku] = parts
+
+            wakus = [b.waku for b in features.boats]
+            raw = [scores[w] for w in wakus]
+            win_list = softmax(raw, self.settings.prediction.temperature)
+            win_probs = {w: p for w, p in zip(wakus, win_list)}
+
+            quinella_probs = self._place_probs(win_probs, top_n=2)
+            trio_probs = self._place_probs(win_probs, top_n=3)
+            cfg = self.settings.prediction
+            from boatrace.prediction.delay_upset import (
+                compute_delay_beneficiaries,
+                inject_delay_ana_tickets,
+            )
+
+            fly_risk = float(features.env.get("course1_fly_risk") or 0.0)
+            delay_info = compute_delay_beneficiaries(
+                features,
+                favorite=max(win_probs, key=win_probs.get) if win_probs else None,
+                win_probs=win_probs,
+                top3_probs=trio_probs,
+                limit=3,
+            )
+            bundle = build_combination_bundle(
+                win_probs,
+                quinella_probs,
+                trio_probs,
+                n_win=cfg.win_candidates,
+                n_sanrenpuku=cfg.sanrenpuku_candidates,
+                n_sanrentan=cfg.sanrentan_candidates,
+                prior_weight=0.15 if pre_mode else 0.03,
+                fly_risk=fly_risk,
+                delay_beneficiaries=([] if pre_mode else (delay_info.get("beneficiaries") or [])),
+            )
+        finally:
+            if saved_weights is not None:
+                self.weights = saved_weights
 
         # 1着はスコア由来の勝率順（3連単の1着固定を避ける）
         rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
@@ -103,14 +119,15 @@ class ScoringPredictor(BasePredictor):
         candidates_quinella = bundle["candidates_quinella"]
         candidates_trio = bundle["candidates_trio"]
         tickets = bundle.get("tickets") or {}
-        tickets = inject_delay_ana_tickets(
-            tickets,
-            beneficiaries=delay_info.get("beneficiaries") or [],
-            favorite=rankings[0] if rankings else None,
-            top3_probs=trio_probs,
-            strengths=bundle.get("strengths"),
-            fly_risk=fly_risk,
-        )
+        if not pre_mode:
+            tickets = inject_delay_ana_tickets(
+                tickets,
+                beneficiaries=delay_info.get("beneficiaries") or [],
+                favorite=rankings[0] if rankings else None,
+                top3_probs=trio_probs,
+                strengths=bundle.get("strengths"),
+                fly_risk=fly_risk,
+            )
         if tickets.get("win"):
             probs = [float(win_probs[w]) for w in candidates_win]
             psum = sum(probs) or 1.0
@@ -130,20 +147,23 @@ class ScoringPredictor(BasePredictor):
         upset_candidates: list[int] = []
         if has_upset:
             upset_candidates = [w for w in rankings[1:4] if w >= 4]
-        for w in delay_info.get("beneficiaries") or []:
-            if w not in upset_candidates and w != rankings[0]:
-                upset_candidates.append(int(w))
-                has_upset = True
-        for boat in features.boats:
-            if boat.values.get("exhibition_advantage", 0) >= 0.95 and boat.waku >= 4:
-                if boat.waku not in upset_candidates:
-                    upset_candidates.append(boat.waku)
+        if not pre_mode:
+            for w in delay_info.get("beneficiaries") or []:
+                if w not in upset_candidates and w != rankings[0]:
+                    upset_candidates.append(int(w))
+                    has_upset = True
+            for boat in features.boats:
+                if boat.values.get("exhibition_advantage", 0) >= 0.95 and boat.waku >= 4:
+                    if boat.waku not in upset_candidates:
+                        upset_candidates.append(boat.waku)
 
         reasons = self._build_reasons(features, contribs, win_probs)
         win_labels = [t["label"] for t in tickets.get("win", [])]
         best_tf = tickets.get("sanrentan", [{}])[0].get("label", "")
         best_tr = tickets.get("sanrenpuku", [{}])[0].get("label", "")
         for w, msgs in reasons.items():
+            if pre_mode:
+                msgs.insert(0, "展示前モード: 級別・モーター・選手コース・場傾向を重視")
             if win_labels:
                 msgs.insert(0, f"単勝候補 {', '.join(win_labels)}")
             if best_tr:
@@ -158,15 +178,17 @@ class ScoringPredictor(BasePredictor):
                 str(b.waku): {"values": b.values, "raw": b.raw, "missing": b.missing}
                 for b in features.boats
             },
-            "weights": self.weights,
+            "weights": dict(self.weights),
             "sanrentan": bundle["sanrentan"],
             "sanrenpuku": bundle["sanrenpuku"],
             "sanrentan_probs": bundle["sanrentan_probs"],
             "sanrenpuku_probs": bundle["sanrenpuku_probs"],
             "tickets": tickets,
             "course1_fly_risk": fly_risk,
-            "delay_upset": delay_info,
-            "delay_thesis": delay_info.get("thesis") or "",
+            "delay_upset": delay_info if not pre_mode else {"beneficiaries": [], "thesis": ""},
+            "delay_thesis": (delay_info.get("thesis") or "") if not pre_mode else "",
+            "pre_exhibition_mode": pre_mode,
+            "exhibition": phase.get("exhibition") or {},
         }
 
         return PredictionResult(

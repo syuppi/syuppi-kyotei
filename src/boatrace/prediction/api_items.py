@@ -59,6 +59,7 @@ def prediction_item_from_db(card: RaceCard, pred: PredictHistory) -> dict[str, A
         "confidence": snap.get("confidence") or {},
         "is_confident": bool((snap.get("confidence") or {}).get("is_confident")),
         "confidence_score": (snap.get("confidence") or {}).get("score"),
+        "pre_exhibition_mode": bool(snap.get("pre_exhibition_mode")),
         "sanrentan": [
             t.get("combo") for t in tickets.get("sanrentan", []) if t.get("combo")
         ]
