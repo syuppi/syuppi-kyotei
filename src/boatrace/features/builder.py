@@ -170,6 +170,7 @@ class FeatureBuilder:
             "near_low_tide": bool(tide.near_low_tide) if tide else False,
             "tide_sensitive": bool(venue_cfg.tide_sensitive) if venue_cfg else False,
             "is_fixed_entry": card.is_fixed_entry,
+            "race_title": card.race_title or "",
             "typical_in_advantage": (
                 venue_cfg.typical_in_advantage if venue_cfg else 0.52
             ),

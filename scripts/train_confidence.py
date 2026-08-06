@@ -93,6 +93,13 @@ def collect_rows(
             feat = extract_confidence_features(features, pred)
             Xs.append(features_to_vector(feat))
             ys.append(int(hit))
+            # 自信あり時と同じ3連単集中を当てた場合の的中で閾値を合わせる
+            from boatrace.prediction.confidence import focus_trifecta_on_top_trios
+
+            focused_tickets = focus_trifecta_on_top_trios(
+                pred.tickets or {}, limit=5, primary_perms=3
+            )
+            pred.tickets = focused_tickets
             tf = _tf_hit(pred, card)
             ytf.append(int(tf) if tf is not None else 0)
             meta.append(
@@ -183,7 +190,9 @@ def main() -> None:
         y_tr,
         X_valid=X_va if len(y_va) else None,
         y_valid=y_va if len(y_va) else None,
+        y_tf_valid=ytf_va if len(ytf_va) else None,
         target_coverage=target_cov,
+        target_tf=0.35,
     )
     path = rc.save(DEFAULT_CONFIDENCE_PATH)
 
