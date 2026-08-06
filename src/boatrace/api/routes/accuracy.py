@@ -49,3 +49,14 @@ def accuracy_daily(
             for r in rows
         ]
     }
+
+
+@router.get("/accuracy/ticket-ranks")
+def accuracy_ticket_ranks(
+    days: int = Query(14, ge=1, le=90),
+    db: Session = Depends(get_db),
+) -> dict:
+    """候補1〜5番手ごとの過去的中率（UIガイド用）."""
+    from boatrace.prediction.ticket_rank_stats import get_ticket_rank_stats
+
+    return get_ticket_rank_stats(db, days=days)

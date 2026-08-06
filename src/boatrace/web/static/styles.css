@@ -361,6 +361,59 @@ input, select {
 .ticket-list li strong {
   font-variant-numeric: tabular-nums;
 }
+.ticket-rank-panel {
+  margin: 0.85rem 0 1.1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+}
+.ticket-rank-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.85rem;
+  align-items: baseline;
+  margin-bottom: 0.25rem;
+}
+.ticket-rank-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.55rem;
+}
+.rank-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.rank-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  background: rgba(0,0,0,0.12);
+}
+.rank-pill em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.rank-hist {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  color: var(--accent-2, #f0c674);
+  border: 1px solid rgba(240, 198, 116, 0.35);
+  vertical-align: middle;
+}
+@media (max-width: 720px) {
+  .ticket-rank-grid { grid-template-columns: 1fr; }
+}
 .ex-wrap, .scenario-wrap {
   margin-top: 0.85rem;
   background: rgba(255,255,255,0.03);

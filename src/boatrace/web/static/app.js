@@ -9,6 +9,72 @@ function pct(v) {
   return `${(Number(v) * 100).toFixed(1)}%`;
 }
 
+let _ticketRankStats = null;
+
+async function loadTicketRankStats() {
+  if (_ticketRankStats) return _ticketRankStats;
+  try {
+    _ticketRankStats = await jget("/api/accuracy/ticket-ranks?days=14");
+  } catch (_) {
+    _ticketRankStats = null;
+  }
+  return _ticketRankStats;
+}
+
+function displayTicketRankBlock(payload) {
+  if (!payload) return null;
+  return payload.display || payload.baseline || payload;
+}
+
+function rankHitRate(kind, rank) {
+  const block = displayTicketRankBlock(_ticketRankStats);
+  if (!block) return null;
+  const key = kind === "trio" || kind === "sanrenpuku" ? "sanrenpuku" : "sanrentan";
+  const rows = (block[key] || {}).ranks || [];
+  const row = rows.find((r) => Number(r.rank) === Number(rank));
+  return row ? Number(row.hit_rate) : null;
+}
+
+function renderTicketRankPanel(el, payload, { compact = false } = {}) {
+  if (!el) return;
+  const block = displayTicketRankBlock(payload);
+  if (!block || !block.sanrenpuku) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  el.hidden = false;
+  const period = block.period || {};
+  const trio = block.sanrenpuku;
+  const tf = block.sanrentan || {};
+  const fmtRanks = (rows) => (rows || []).map((r) => {
+    const name = r.label || `${r.rank}番手`;
+    return `<span class="rank-pill"><em>${name}</em> ${pct(r.hit_rate)}</span>`;
+  }).join("");
+  const pre = block.pre_exhibition;
+  const preNote = (!compact && pre)
+    ? `<p class="meta">展示前モードでも同傾向（3連複いずれか ${pct(pre.sanrenpuku?.any_rate)} / 本命 ${pct(pre.sanrenpuku?.ranks?.[0]?.hit_rate)}）</p>`
+    : "";
+  el.innerHTML = `
+    <div class="ticket-rank-head">
+      <strong>候補順位別の過去的中率</strong>
+      <span class="meta">${block.label || ""} · ${period.start || "?"}〜${period.end || "?"} · n=${block.n_races || "-"}</span>
+    </div>
+    <p class="meta">${block.note || "各順位の候補が単体で的中した割合（カバー全体の的中率とは別）"}</p>
+    <div class="ticket-rank-grid">
+      <div>
+        <div class="ticket-title">3連複（いずれか ${pct(trio.any_rate)}）</div>
+        <div class="rank-pills">${fmtRanks(trio.ranks)}</div>
+      </div>
+      <div>
+        <div class="ticket-title">3連単（いずれか ${pct(tf.any_rate)}）</div>
+        <div class="rank-pills">${fmtRanks(tf.ranks)}</div>
+      </div>
+    </div>
+    ${preNote}
+  `;
+}
+
 function todayISO() {
   const d = new Date();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -243,6 +309,10 @@ async function bootPredictions() {
   const list = document.getElementById("list");
   const summary = document.getElementById("summary");
   day.value = todayISO();
+  loadTicketRankStats().then((stats) => {
+    renderTicketRankPanel(document.getElementById("ticket-rank-stats"), stats);
+    if (_predCache.data) renderPredictions();
+  });
 
   function setStatus(msg) {
     if (statusEl) statusEl.textContent = msg || "";
@@ -528,7 +598,7 @@ function renderPredictions() {
       return `<details class="ticket-why"><summary>根拠</summary><ul>${lis}</ul></details>`;
     };
 
-    const fmtTicket = (t, kind) => {
+    const fmtTicket = (t, kind, rankIdx) => {
       const share = Math.round((Number(t.stake_share) || 0) * 100);
       const pr = Number(t.prob) || 0;
       const odd = t.odds != null ? Number(t.odds) : null;
@@ -557,17 +627,29 @@ function renderPredictions() {
       const prefix = t.role_label
         ? `【${t.role_label}・${(t.style_label || "").replace(/型.*/, "型")}】`
         : "";
+      const histRate = (kind === "trio" || kind === "tf") ? rankHitRate(kind, rankIdx) : null;
+      const histTxt = histRate != null
+        ? ` <span class="rank-hist" title="この順位の候補が過去検証で的中した割合">過去${pct(histRate)}</span>`
+        : "";
       return `<li>
-        <div class="ticket-line"><strong>${prefix}${t.label}</strong>${mark}${valueBadge}
+        <div class="ticket-line"><strong>${prefix}${t.label}</strong>${mark}${valueBadge}${histTxt}
           <span class="muted">確率${pct(pr)}${oddsTxt}${evTxt} / 配分${share}%</span></div>
         ${reasonDetails(kindKey, t)}
       </li>`;
     };
-    const ticketBlock = (title, rows, kind) => `
+    const ticketBlock = (title, rows, kind) => {
+      const anyRate = kind === "trio"
+        ? displayTicketRankBlock(_ticketRankStats)?.sanrenpuku?.any_rate
+        : (kind === "tf" ? displayTicketRankBlock(_ticketRankStats)?.sanrentan?.any_rate : null);
+      const sub = anyRate != null
+        ? ` <span class="muted">過去いずれか ${pct(anyRate)}</span>`
+        : "";
+      return `
       <div class="ticket-block">
-        <div class="ticket-title">${title}</div>
-        <ol class="ticket-list">${rows.map((t) => fmtTicket(t, kind)).join("") || "<li>候補なし</li>"}</ol>
+        <div class="ticket-title">${title}${sub}</div>
+        <ol class="ticket-list">${rows.map((t, i) => fmtTicket(t, kind, i + 1)).join("") || "<li>候補なし</li>"}</ol>
       </div>`;
+    };
 
     const ex = item.exhibition || {};
     const exEntries = ex.entries || [];
@@ -726,6 +808,48 @@ async function bootAccuracy() {
     <div class="stat"><div class="label">3連複(〜3候補)</div><div class="value">${pct(summary.trio_rate)}</div></div>
     <div class="stat"><div class="label">3連単(〜3候補)</div><div class="value">${pct(summary.trifecta_rate || 0)}</div></div>
   `;
+  const rankStats = await loadTicketRankStats();
+  const panel = document.getElementById("acc-ticket-ranks");
+  renderTicketRankPanel(panel, rankStats);
+  if (panel && rankStats) {
+    const live = rankStats.live;
+    const base = rankStats.baseline || rankStats.display;
+    const tableFor = (title, block) => {
+      if (!block) return "";
+      const rows = [];
+      const n = Math.max(
+        (block.sanrenpuku?.ranks || []).length,
+        (block.sanrentan?.ranks || []).length,
+      );
+      for (let i = 0; i < n; i++) {
+        const tr = (block.sanrenpuku?.ranks || [])[i] || {};
+        const tf = (block.sanrentan?.ranks || [])[i] || {};
+        rows.push(`<tr>
+          <td>${tr.rank || tf.rank || i + 1} ${tr.label || ""}</td>
+          <td>${pct(tr.hit_rate)}</td>
+          <td>${pct(tf.hit_rate)}</td>
+        </tr>`);
+      }
+      return `
+        <div class="table-wrap" style="margin-top:0.75rem">
+          <h3 style="font-size:0.95rem;margin:0 0 0.4rem">${title}</h3>
+          <table>
+            <thead><tr><th>候補順位</th><th>3連複的中率</th><th>3連単的中率</th></tr></thead>
+            <tbody>
+              ${rows.join("")}
+              <tr>
+                <td>いずれか（最大5点）</td>
+                <td>${pct(block.sanrenpuku?.any_rate)}</td>
+                <td>${pct(block.sanrentan?.any_rate)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="meta">期間 ${block.period?.start || "?"}〜${block.period?.end || "?"} / n=${block.n_races || "-"}</p>
+        </div>`;
+    };
+    panel.insertAdjacentHTML("beforeend", tableFor(base?.label || "ベースライン", base));
+    if (live) panel.insertAdjacentHTML("beforeend", tableFor(live.label || "ライブ", live));
+  }
   const daily = await jget("/api/accuracy/daily?days=14");
   const rows = daily.items.map((r) => `
     <tr>
