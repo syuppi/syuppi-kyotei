@@ -45,8 +45,8 @@ class PredictionConfig(BaseModel):
     recent_n_races: int = 10
     recent_decay: float = 0.85
     win_candidates: int = 3
-    sanrenpuku_candidates: int = 3
-    sanrentan_candidates: int = 3
+    sanrenpuku_candidates: int = 5
+    sanrentan_candidates: int = 5
 
 
 class LearningConfig(BaseModel):

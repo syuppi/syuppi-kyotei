@@ -90,7 +90,7 @@ function normalizeTickets(item) {
   let spTickets = Array.isArray(tickets.sanrenpuku) ? tickets.sanrenpuku : [];
   if (!spTickets.length) {
     const src = item.sanrenpuku || [];
-    spTickets = src.slice(0, 3).map((c, i) => {
+    spTickets = src.slice(0, 5).map((c, i) => {
       const combo = Array.isArray(c) ? c.map(Number) : [];
       return {
         rank: i + 1,
@@ -105,7 +105,7 @@ function normalizeTickets(item) {
   let stTickets = Array.isArray(tickets.sanrentan) ? tickets.sanrentan : [];
   if (!stTickets.length) {
     const src = item.sanrentan || (item.rankings ? [item.rankings.slice(0, 3)] : []);
-    stTickets = src.slice(0, 3).map((c, i) => {
+    stTickets = src.slice(0, 5).map((c, i) => {
       const combo = Array.isArray(c) ? c.map(Number) : [];
       return {
         rank: i + 1,
@@ -131,8 +131,8 @@ function normalizeTickets(item) {
 
   return {
     wins: fillShares(winTickets).slice(0, 3),
-    sps: fillShares(spTickets).slice(0, 3),
-    sts: fillShares(stTickets).slice(0, 3),
+    sps: fillShares(spTickets).slice(0, 5),
+    sts: fillShares(stTickets).slice(0, 5),
   };
 }
 

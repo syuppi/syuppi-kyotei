@@ -12,7 +12,7 @@ import lightgbm as lgb
 import numpy as np
 from sqlalchemy.orm import Session
 
-from boatrace.config import ROOT_DIR
+from boatrace.config import ROOT_DIR, get_settings
 from boatrace.logging_setup import get_logger
 from boatrace.models.combinations import build_combination_bundle
 from boatrace.models.dataset import (
@@ -165,7 +165,13 @@ def _bundle_from_models(
         rs = np.exp(rs)
         rank_scores = {s.wakus[i]: float(rs[i]) for i in range(6)}
     return build_combination_bundle(
-        combo_win, top2_probs, top3_probs, rank_scores=rank_scores
+        combo_win,
+        top2_probs,
+        top3_probs,
+        rank_scores=rank_scores,
+        n_sanrenpuku=get_settings().prediction.sanrenpuku_candidates,
+        n_sanrentan=get_settings().prediction.sanrentan_candidates,
+        fly_risk=fly_risk,
     )
 
 
@@ -306,8 +312,9 @@ def _train_place_models(
     y_top2_va, y_top3_va = stack_place_labels(valid_samples)
 
     win_model = _fit_binary(X_train, y_win_tr, X_valid, y_win_va)
-    top2_model = _fit_binary(X_train, y_top2_tr, X_valid, y_top2_va)
-    top3_model = _fit_binary(X_train, y_top3_tr, X_valid, y_top3_va)
+    top2_model = _fit_binary(X_train, y_top2_tr, X_valid, y_top2_va, n_estimators=450)
+    # 3着以内を主目標として top3 を厚めに学習
+    top3_model = _fit_binary(X_train, y_top3_tr, X_valid, y_top3_va, n_estimators=550)
     ranker = _fit_ranker(train_samples, valid_samples)
 
     X_fly_tr, y_fly_tr = _stack_fly_dataset(train_samples)
@@ -412,7 +419,7 @@ def train_lgbm(
             "valid_no_ranker": valid_no_ranker,
         },
         "feature_importance": importance,
-        "version": "hitrate_v4",
+        "version": "hitrate_v5",
     }
     joblib.dump(payload, model_path)
     logger.info("model_saved", path=str(model_path), valid=valid_m)
@@ -560,7 +567,7 @@ def retrain_all_before_today(
             "trained_at": date.today().isoformat(),
             "metrics": metrics,
             "feature_importance": importance,
-            "version": "hitrate_v4",
+            "version": "hitrate_v5",
         },
         path,
     )

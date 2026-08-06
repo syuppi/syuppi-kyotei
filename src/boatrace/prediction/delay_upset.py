@@ -181,7 +181,7 @@ def inject_delay_ana_tickets(
             mates = _mates(head, 2)
             if len(mates) >= 2:
                 ana = {
-                    "rank": 3,
+                    "rank": len(st),
                     "combo": [head, mates[0], mates[1]],
                     "label": f"{head}-{mates[0]}-{mates[1]}",
                     "prob": float(st[-1].get("prob") or 0.01) * 0.9,
@@ -189,8 +189,9 @@ def inject_delay_ana_tickets(
                     "delay_ana": True,
                     "why_short": f"本命遅れ想定→{head}号頭の展開穴",
                 }
-                if len(st) >= 3:
-                    st[2] = ana
+                # 本命・対抗は残し、末尾（穴枠）だけ差し替え / 追記
+                if len(st) >= 2:
+                    st[-1] = ana
                 else:
                     ana["rank"] = len(st) + 1
                     st.append(ana)
@@ -212,7 +213,7 @@ def inject_delay_ana_tickets(
             combo = sorted({head, *mates[:2]})
             if len(combo) == 3:
                 ana = {
-                    "rank": 3,
+                    "rank": len(sp),
                     "combo": combo,
                     "label": "-".join(map(str, combo)),
                     "prob": float(sp[-1].get("prob") or 0.01) * 0.9,
@@ -220,8 +221,8 @@ def inject_delay_ana_tickets(
                     "delay_ana": True,
                     "why_short": f"本命遅れ想定→{head}号を絡めた3連複穴",
                 }
-                if len(sp) >= 3:
-                    sp[2] = ana
+                if len(sp) >= 2:
+                    sp[-1] = ana
                 else:
                     ana["rank"] = len(sp) + 1
                     sp.append(ana)

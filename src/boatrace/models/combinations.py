@@ -371,6 +371,97 @@ def select_diverse_trios(
     return out[:limit]
 
 
+def expand_trio_coverage(
+    trio_ranked: list[tuple[frozenset[int], float]],
+    selected: list[tuple[list[int], float]],
+    *,
+    limit: int,
+    top3_probs: dict[int, float] | None = None,
+) -> list[tuple[list[int], float]]:
+    """4点目以降: 上位5艇の C(5,3) を優先してカバー拡張（本線は維持）."""
+    out = list(selected)
+    used = {frozenset(c) for c, _ in out}
+    covered: set[int] = set().union(*[set(c) for c, _ in out]) if out else set()
+    t3 = top3_probs or {}
+    p_lookup = {k: float(p) for k, p in trio_ranked}
+    ranked_boats = sorted(t3.keys(), key=lambda w: float(t3.get(w, 0.0)), reverse=True)
+    pool = ranked_boats[:5]
+
+    def geo(key: frozenset[int]) -> float:
+        vals = [max(float(t3.get(w, 0.05)), 1e-6) for w in key]
+        return (vals[0] * vals[1] * vals[2]) ** (1.0 / 3.0)
+
+    # 1) プール組み合わせを geo × 新規性で追加
+    pool_keys = [frozenset(c) for c in combinations(pool, 3)]
+    pool_keys.sort(
+        key=lambda k: -(
+            0.55 * geo(k)
+            + 0.25 * p_lookup.get(k, 0.0)
+            + 0.35 * len(k - covered)
+        )
+    )
+    for key in pool_keys:
+        if len(out) >= limit:
+            break
+        if key in used:
+            continue
+        out.append((sorted(key), float(p_lookup.get(key, geo(key) * 0.05))))
+        used.add(key)
+        covered |= set(key)
+
+    # 2) 足りなければ通常の高確率候補で埋める
+    for key, p in trio_ranked:
+        if len(out) >= limit:
+            break
+        if key in used:
+            continue
+        out.append((sorted(key), float(p)))
+        used.add(key)
+        covered |= set(key)
+    return out[:limit]
+
+
+def expand_trifecta_coverage(
+    ordered: list[tuple[tuple[int, int, int], float]],
+    selected: list[tuple[list[int], float]],
+    *,
+    limit: int,
+) -> list[tuple[list[int], float]]:
+    """本命セットの別順列→その他高確率並びで3連単カバーを拡張."""
+    out = list(selected)
+    have = {tuple(c) for c, _ in out}
+    if not out and ordered:
+        return [(list(t), float(p)) for t, p in ordered[:limit]]
+
+    top_set = frozenset(out[0][0])
+    for ticket, p in ordered:
+        if len(out) >= limit:
+            break
+        if frozenset(ticket) != top_set or tuple(ticket) in have:
+            continue
+        out.append((list(ticket), float(p)))
+        have.add(tuple(ticket))
+
+    if len(selected) > 1 and len(out) < limit:
+        second_set = frozenset(selected[1][0])
+        for ticket, p in ordered:
+            if len(out) >= limit:
+                break
+            if frozenset(ticket) != second_set or tuple(ticket) in have:
+                continue
+            out.append((list(ticket), float(p)))
+            have.add(tuple(ticket))
+
+    for ticket, p in ordered:
+        if len(out) >= limit:
+            break
+        if tuple(ticket) in have:
+            continue
+        out.append((list(ticket), float(p)))
+        have.add(tuple(ticket))
+    return out[:limit]
+
+
 def merge_ordered_lists(
     primary: list[tuple[tuple[int, int, int], float]],
     secondary: list[tuple[tuple[int, int, int], float]],
@@ -409,13 +500,13 @@ def build_combination_bundle(
     top3 = {w: float(max(0.01, min(0.98, v))) for w, v in top3.items()}
 
     strengths = blend_place_strengths(
-        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.50, w_top2=0.22, w_top3=0.18, w_rank=0.10
+        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.42, w_top2=0.22, w_top3=0.26, w_rank=0.10
     )
     second_strengths = blend_place_strengths(
-        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.20, w_top2=0.50, w_top3=0.20, w_rank=0.10
+        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.18, w_top2=0.48, w_top3=0.24, w_rank=0.10
     )
     third_strengths = blend_place_strengths(
-        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.12, w_top2=0.23, w_top3=0.55, w_rank=0.10
+        win_probs, top2, top3, rank_scores=rank_scores, w_win=0.10, w_top2=0.22, w_top3=0.58, w_rank=0.10
     )
 
     ordered_pl = plackett_luce_ordered(strengths)
@@ -466,13 +557,24 @@ def build_combination_bundle(
 
     diverse_tf = select_diverse_trifectas(
         ordered,
-        limit=max(2, min(int(n_sanrentan), 3)),
+        limit=max(2, min(int(n_sanrentan), 5)),
         delay_heads=delay_heads,
     )
+    diverse_tf = expand_trifecta_coverage(
+        ordered, diverse_tf, limit=max(2, min(int(n_sanrentan), 5))
+    )
+    # 本命〜対抗は確率上位を確保し、4点目以降で上位艇プールを拡張
+    primary_n = min(int(n_sanrenpuku), 3)
     diverse_sp = select_diverse_trios(
         trio_ranked,
-        limit=max(2, min(int(n_sanrenpuku), 3)),
+        limit=max(1, primary_n),
         delay_boats=delay_heads,
+    )
+    diverse_sp = expand_trio_coverage(
+        trio_ranked,
+        diverse_sp,
+        limit=max(2, min(int(n_sanrenpuku), 5)),
+        top3_probs=top3,
     )
 
     best_order = diverse_tf[0][0] if diverse_tf else list(ordered[0][0])
