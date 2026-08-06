@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from boatrace.db.models import PredictHistory, RaceCard
 from boatrace.db.session import get_db
+from boatrace.prediction.api_items import prediction_item_from_db
+from boatrace.prediction.review import review_from_db_row
 from boatrace.prediction.service import PredictionService
 
 router = APIRouter()
@@ -25,8 +27,7 @@ def predictions_today(
     target = date.today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
     if refresh:
         svc = PredictionService(db)
-        items = svc.predict_day(target, venue_id=venue_id, persist=True)
-        return {"date": target.isoformat(), "count": len(items), "items": items}
+        svc.predict_day(target, venue_id=venue_id, persist=True)
 
     q = (
         db.query(RaceCard)
@@ -46,61 +47,7 @@ def predictions_today(
         )
         if not pred:
             continue
-        items.append(
-            {
-                "race_card_id": card.id,
-                "venue_id": card.venue_id,
-                "venue_name": card.venue.name if card.venue else card.venue_id,
-                "race_date": card.race_date.isoformat(),
-                "race_no": card.race_no,
-                "race_title": card.race_title,
-                "status": card.status,
-                "model_name": pred.model_name,
-                "rankings": pred.rankings,
-                "win_probs": pred.win_probs,
-                "quinella_probs": pred.quinella_probs,
-                "trio_probs": pred.trio_probs,
-                "candidates_win": pred.candidates_win,
-                "candidates_quinella": pred.candidates_quinella,
-                "candidates_trio": pred.candidates_trio,
-                "upset_candidates": pred.upset_candidates,
-                "has_upset": pred.has_upset,
-                "reasons": pred.reasons,
-                "tickets": (pred.feature_snapshot or {}).get("tickets") or {},
-                "exhibition": (pred.feature_snapshot or {}).get("exhibition"),
-                "scenarios": ((pred.feature_snapshot or {}).get("scenarios") or {}).get(
-                    "comments"
-                )
-                or [],
-                "scenario_detail": (pred.feature_snapshot or {}).get("scenarios"),
-                "ev_reasons": (pred.feature_snapshot or {}).get("ev_reasons") or [],
-                "has_odds": bool((pred.feature_snapshot or {}).get("has_odds")),
-                "race_thesis": (pred.feature_snapshot or {}).get("race_thesis") or "",
-                "ticket_reasons": (pred.feature_snapshot or {}).get("ticket_reasons") or {},
-                "styles": (pred.feature_snapshot or {}).get("styles") or {},
-                "sanrentan": [
-                    t.get("combo")
-                    for t in ((pred.feature_snapshot or {}).get("tickets") or {}).get(
-                        "sanrentan", []
-                    )
-                ]
-                or (pred.feature_snapshot or {}).get("sanrentan")
-                or ([pred.rankings[:3]] if pred.rankings else []),
-                "sanrenpuku": [
-                    t.get("combo")
-                    for t in ((pred.feature_snapshot or {}).get("tickets") or {}).get(
-                        "sanrenpuku", []
-                    )
-                ]
-                or (pred.feature_snapshot or {}).get("sanrenpuku")
-                or ([sorted(pred.candidates_trio[:3])] if pred.candidates_trio else []),
-                "result": {
-                    "rank1": card.result.rank1_waku if card.result else None,
-                    "rank2": card.result.rank2_waku if card.result else None,
-                    "rank3": card.result.rank3_waku if card.result else None,
-                },
-            }
-        )
+        items.append(prediction_item_from_db(card, pred))
     return {"date": target.isoformat(), "count": len(items), "items": items}
 
 
@@ -188,11 +135,24 @@ def prediction_detail(race_card_id: int, db: Session = Depends(get_db)) -> dict:
             "race_thesis": (pred.feature_snapshot or {}).get("race_thesis") if pred else None,
             "ticket_reasons": (pred.feature_snapshot or {}).get("ticket_reasons") if pred else None,
             "styles": (pred.feature_snapshot or {}).get("styles") if pred else None,
+            "review": (
+                review_from_db_row(
+                    pred_tickets=(pred.feature_snapshot or {}).get("tickets"),
+                    feature_snapshot=pred.feature_snapshot,
+                    rankings=pred.rankings,
+                    win_probs=pred.win_probs,
+                    upset_candidates=pred.upset_candidates,
+                    race_result=card.result,
+                )
+                if pred
+                else None
+            ),
         },
         "result": {
             "rank1": card.result.rank1_waku if card.result else None,
             "rank2": card.result.rank2_waku if card.result else None,
             "rank3": card.result.rank3_waku if card.result else None,
             "kimarite": card.result.kimarite if card.result else None,
+            "entry_results": card.result.entry_results if card.result else None,
         },
     }

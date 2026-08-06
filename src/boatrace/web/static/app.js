@@ -501,10 +501,36 @@ function renderPredictions() {
       if (!hits.hasResult) {
         return `<div class="meta">結果: 未確定（予測のみ）</div>`;
       }
-      return `<div class="meta">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}
+      const kim = item.result?.kimarite ? ` / ${item.result.kimarite}` : "";
+      return `<div class="meta">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}${kim}
         <span class="badge ${hits.hitWin ? "hit" : "upset"}">${hits.hitWin ? "単勝的中" : "単勝外れ"}</span>
         <span class="badge ${hits.hitTrio ? "hit" : "upset"}">${hits.hitTrio ? "3連複的中" : "3連複外れ"}</span>
         <span class="badge ${hits.hitTf ? "hit" : "upset"}">${hits.hitTf ? "3連単的中" : "3連単外れ"}</span>
+      </div>`;
+    })();
+
+    const review = item.review;
+    const reviewHtml = (() => {
+      if (!review) return "";
+      const hitLis = (review.bullets_hit || []).map((b) => `<li class="rev-hit">${b}</li>`).join("");
+      const missLis = (review.bullets_miss || []).map((b) => `<li class="rev-miss">${b}</li>`).join("");
+      const ctxLis = (review.context || []).map((b) => `<li>${b}</li>`).join("");
+      const lessonLis = (review.lessons || []).map((b) => `<li>${b}</li>`).join("");
+      const title = hits.anyHit ? "的中の復習" : "外れの復習";
+      const cls = hits.anyHit ? "review-hit" : "review-miss";
+      if (compact) {
+        return `<div class="review-box ${cls} compact">
+          <div class="ticket-title">${title}</div>
+          <p class="review-headline">${review.headline || ""}</p>
+        </div>`;
+      }
+      return `<div class="review-box ${cls}">
+        <div class="ticket-title">${title}</div>
+        <p class="review-headline">${review.headline || ""}</p>
+        ${hitLis ? `<div class="review-sec"><strong>なぜ当たったか</strong><ul>${hitLis}</ul></div>` : ""}
+        ${missLis ? `<div class="review-sec"><strong>なぜ外れたか</strong><ul>${missLis}</ul></div>` : ""}
+        ${ctxLis ? `<div class="review-sec"><strong>展開の振り返り</strong><ul>${ctxLis}</ul></div>` : ""}
+        ${lessonLis ? `<div class="review-sec"><strong>次に活かす点</strong><ul>${lessonLis}</ul></div>` : ""}
       </div>`;
     })();
 
@@ -527,6 +553,7 @@ function renderPredictions() {
           ${ticketBlock("3連複 候補", sps, "trio")}
           ${ticketBlock("3連単 候補", sts, "tf")}
         </div>
+        ${reviewHtml}
         ${exTable}
         ${scenarioHtml}
         <div class="reasons">${item.race_thesis ? "" : `<strong>本命の理由</strong>${reasonTop || "<div>・ データ不足</div>"}`}

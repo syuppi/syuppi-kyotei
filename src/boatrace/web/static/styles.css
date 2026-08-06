@@ -230,6 +230,48 @@ input, select {
   line-height: 1.45;
 }
 .ticket-line { line-height: 1.45; }
+.review-box {
+  margin-top: 0.85rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.03);
+}
+.review-box.review-hit {
+  border-color: rgba(62, 207, 173, 0.4);
+  background: rgba(62, 207, 173, 0.07);
+}
+.review-box.review-miss {
+  border-color: rgba(240, 180, 41, 0.35);
+  background: rgba(240, 180, 41, 0.07);
+}
+.review-headline {
+  margin: 0.2rem 0 0.45rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #d7e6ea;
+}
+.review-sec {
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+  color: #c7dbe0;
+}
+.review-sec strong {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 0.15rem;
+}
+.review-sec ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  line-height: 1.5;
+}
+.review-sec li.rev-hit { color: var(--accent); }
+.review-sec li.rev-miss { color: var(--accent-2); }
+.review-box.compact .review-headline {
+  margin-bottom: 0;
+  font-size: 0.84rem;
+}
 .check-label {
   flex-direction: row;
   align-items: center;
