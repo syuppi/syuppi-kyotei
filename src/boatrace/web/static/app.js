@@ -38,21 +38,39 @@ async function fillVenues(selectEl, includeAll = true) {
 }
 
 /** 指定日の開催場だけをセレクトに入れる（非開催場は出さない） */
-async function fillActiveVenues(selectEl, day) {
+async function fillActiveVenues(selectEl, day, opts = {}) {
   const prev = selectEl.value;
-  const data = await jget(`/api/venues?day=${encodeURIComponent(day)}`);
+  const confidentOnly = Boolean(opts.confidentOnly);
+  const qs = new URLSearchParams({ day });
+  if (confidentOnly) qs.set("confident_only", "true");
+  const data = await jget(`/api/venues?${qs}`);
   selectEl.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
   placeholder.textContent = (data.items && data.items.length)
     ? "場を選択…"
-    : "この日の開催場がありません";
+    : (confidentOnly ? "自信ありのある場がありません" : "この日の開催場がありません");
   selectEl.appendChild(placeholder);
+
+  // 全場の自信ありだけ見るショートカット
+  const confTotal = Number(data.confident_total || 0);
+  if (confTotal > 0 || !confidentOnly) {
+    const allConf = document.createElement("option");
+    allConf.value = "__all_confident__";
+    allConf.textContent = confTotal > 0
+      ? `自信あり（全場・${confTotal}R）`
+      : "自信あり（全場）";
+    selectEl.appendChild(allConf);
+  }
+
   for (const v of data.items || []) {
     const opt = document.createElement("option");
     opt.value = v.id;
-    const n = v.race_count != null ? `（${v.race_count}R）` : "";
-    opt.textContent = `${v.id} ${v.name}${n}`;
+    const n = v.race_count != null ? `${v.race_count}R` : "";
+    const c = v.confident_count != null ? `自信${v.confident_count}` : "";
+    const meta = [n, c].filter(Boolean).join(" / ");
+    opt.textContent = meta ? `${v.id} ${v.name}（${meta}）` : `${v.id} ${v.name}`;
+    if (v.confident_count > 0) opt.dataset.confident = "1";
     selectEl.appendChild(opt);
   }
   if (prev && [...selectEl.options].some((o) => o.value === prev)) {
@@ -222,6 +240,7 @@ async function bootPredictions() {
   const filterEl = document.getElementById("hit-filter");
   const sortEl = document.getElementById("hit-sort");
   const compactEl = document.getElementById("compact-mode");
+  const venueConfOnly = document.getElementById("venue-confident-only");
   const statusEl = document.getElementById("load-status");
   const list = document.getElementById("list");
   const summary = document.getElementById("summary");
@@ -243,19 +262,40 @@ async function bootPredictions() {
     }
   }
 
+  function isAllConfidentMode() {
+    return venue.value === "__all_confident__";
+  }
+
+  function venueQueryId() {
+    return isAllConfidentMode() ? "" : venue.value;
+  }
+
   async function refreshVenueOptions() {
     setStatus("開催場を確認中…");
-    const data = await fillActiveVenues(venue, day.value);
-    const has = (data.items || []).length > 0;
+    const data = await fillActiveVenues(venue, day.value, {
+      confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+    });
+    const hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
     setAnalyzeEnabled(Boolean(venue.value));
-    if (!has) {
-      clearRaceView("この日の開催場がありません。日付を変えるか、先に出走表を取得してください。");
-      setStatus("開催場なし");
+    if (!hasList) {
+      clearRaceView(
+        venueConfOnly && venueConfOnly.checked
+          ? "この日の自信ありレースがありません。先に解析するか、チェックを外してください。"
+          : "この日の開催場がありません。日付を変えるか、先に出走表を取得してください。"
+      );
+      setStatus(venueConfOnly && venueConfOnly.checked ? "自信ありの場なし" : "開催場なし");
       return false;
     }
     if (!venue.value) {
-      clearRaceView("場を選択すると、その場だけ解析・表示します。");
-      setStatus(`${data.items.length}場が開催中 — 場を選んでください`);
+      const tip = Number(data.confident_total || 0) > 0
+        ? `場を選ぶか「自信あり（全場）」を選んでください（自信あり ${data.confident_total}R）`
+        : "場を選択すると、その場だけ解析・表示します。";
+      clearRaceView(tip);
+      setStatus(
+        venueConfOnly && venueConfOnly.checked
+          ? `自信ありのある場 ${(data.items || []).length} — 場を選んでください`
+          : `${(data.items || []).length}場が開催中 — 場を選んでください`
+      );
       return false;
     }
     return true;
@@ -270,41 +310,55 @@ async function bootPredictions() {
       return;
     }
     setAnalyzeEnabled(true);
-    const params = new URLSearchParams({ day: day.value, venue_id: venue.value });
+    const allConf = isAllConfidentMode();
+    const params = new URLSearchParams({ day: day.value });
+    const vid = venueQueryId();
+    if (vid) params.set("venue_id", vid);
+    if (allConf) params.set("confident_only", "true");
     try {
       let data;
       if (prepare) {
-        setStatus("出走表を取得して予想中…（この場のみ・高速モード）");
-        const prep = new URLSearchParams(params);
-        prep.set("fast", "true");
-        if (force) prep.set("force", "true");
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 90000);
-        try {
-          const res = await fetch(`/api/day/prepare?${prep}`, {
-            method: "POST",
-            signal: controller.signal,
-          });
-          clearTimeout(timer);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          data = await res.json();
-        } catch (e) {
-          clearTimeout(timer);
-          if (e.name === "AbortError") {
-            throw new Error("タイムアウト（処理が長すぎます。もう一度お試しください）");
-          }
-          const msg = String(e.message || e);
-          setStatus(`${msg} → 保存済み予想を表示します`);
+        if (allConf) {
+          setStatus("全場の自信ありを表示するため、保存済み予想を読み込み中…");
           data = await jget(`/api/predictions/today?${params}`);
+        } else {
+          setStatus("出走表を取得して予想中…（この場のみ・高速モード）");
+          const prep = new URLSearchParams(params);
+          prep.set("fast", "true");
+          if (force) prep.set("force", "true");
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 90000);
+          try {
+            const res = await fetch(`/api/day/prepare?${prep}`, {
+              method: "POST",
+              signal: controller.signal,
+            });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            data = await res.json();
+          } catch (e) {
+            clearTimeout(timer);
+            if (e.name === "AbortError") {
+              throw new Error("タイムアウト（処理が長すぎます。もう一度お試しください）");
+            }
+            const msg = String(e.message || e);
+            setStatus(`${msg} → 保存済み予想を表示します`);
+            data = await jget(`/api/predictions/today?${params}`);
+          }
         }
       } else if (refresh) {
-        setStatus("再予想中…");
-        params.set("refresh", "true");
-        data = await jget(`/api/predictions/today?${params}`);
+        if (allConf) {
+          setStatus("全場の自信ありを読み込み中…");
+          data = await jget(`/api/predictions/today?${params}`);
+        } else {
+          setStatus("再予想中…");
+          params.set("refresh", "true");
+          data = await jget(`/api/predictions/today?${params}`);
+        }
       } else {
         setStatus("読み込み中…");
         data = await jget(`/api/predictions/today?${params}`);
-        if (!data.items || data.items.length === 0) {
+        if ((!data.items || data.items.length === 0) && !allConf) {
           setStatus("データが無いためこの場を取得・予想しています…");
           const prep = new URLSearchParams(params);
           prep.set("fast", "true");
@@ -327,17 +381,25 @@ async function bootPredictions() {
             );
           }
           // prepare 後に場一覧も更新（カードが増えた場合）
-          await fillActiveVenues(venue, day.value);
+          await fillActiveVenues(venue, day.value, {
+            confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+          });
           if (params.get("venue_id") && [...venue.options].some((o) => o.value === params.get("venue_id"))) {
             venue.value = params.get("venue_id");
           }
         }
       }
+      // 全場自信あり、またはチェック連動で表示フィルタを自信ありに合わせる
+      if (allConf && filterEl && filterEl.value === "all") {
+        filterEl.value = "confident";
+      }
       _predCache = { data, prepared: prepareItems(data) };
       renderPredictions();
       const oddsN = (data.items || []).filter((x) => x.has_odds).length;
+      const confN = (data.items || []).filter((x) => x.is_confident || x.confidence?.is_confident).length;
       const cached = data.cached ? "（キャッシュ）" : "";
-      setStatus(`更新済${cached}（${venue.value} / ${data.count || 0}R / オッズあり ${oddsN}R）`);
+      const scope = allConf ? "全場・自信あり" : venue.value;
+      setStatus(`更新済${cached}（${scope} / ${data.count || 0}R / 自信あり ${confN}R / オッズあり ${oddsN}R）`);
     } catch (e) {
       setStatus(`エラー: ${e.message || e}`);
       throw e;
@@ -351,9 +413,19 @@ async function bootPredictions() {
   });
   venue.addEventListener("change", () => {
     setAnalyzeEnabled(Boolean(venue.value));
+    if (isAllConfidentMode() && filterEl) filterEl.value = "confident";
     if (venue.value) load({ prepare: false });
     else clearRaceView("場を選択すると、その場だけ解析・表示します。");
   });
+  if (venueConfOnly) {
+    venueConfOnly.addEventListener("change", async () => {
+      if (venueConfOnly.checked && filterEl && filterEl.value === "all") {
+        filterEl.value = "confident";
+      }
+      const ok = await refreshVenueOptions();
+      if (ok) await load({ prepare: false });
+    });
+  }
   if (filterEl) filterEl.addEventListener("change", () => renderPredictions());
   if (sortEl) sortEl.addEventListener("change", () => renderPredictions());
   if (compactEl) compactEl.addEventListener("change", () => renderPredictions());

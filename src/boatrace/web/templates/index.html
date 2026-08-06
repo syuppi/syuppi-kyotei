@@ -4,13 +4,17 @@
 <section class="hero-panel">
   <p class="eyebrow">Daily Predictions</p>
   <h1>本日の各レース予測</h1>
-  <p class="lede">場を選んでから解析します。自信のあるレースを優先表示でき、予想には本命／対抗／穴の根拠を付けます。確定後は的中・外れの復習も表示します。</p>
+  <p class="lede">場を選んでから解析します。自信ありレースだけに絞ることもできます。未発走でも出走表・展示・天候が揃えば自信度が付きます。</p>
   <div class="controls">
     <label>日付 <input type="date" id="day" /></label>
     <label>場
       <select id="venue">
         <option value="">場を選択…</option>
       </select>
+    </label>
+    <label class="check-label" title="自信ありレースがある場だけを場リストに出します">
+      <span>自信ありの場のみ</span>
+      <input type="checkbox" id="venue-confident-only" />
     </label>
     <label>表示
       <select id="hit-filter">
@@ -46,7 +50,7 @@
 <section id="list" class="race-list" aria-live="polite"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=confident-picker-1"></script>
+<script src="/static/app.js?v=confident-venue-filter-1"></script>
 <script>
   bootPredictions();
 </script>

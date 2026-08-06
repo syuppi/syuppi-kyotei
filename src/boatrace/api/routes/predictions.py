@@ -22,6 +22,7 @@ def predictions_today(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),
     venue_id: Optional[str] = None,
     refresh: bool = False,
+    confident_only: bool = Query(False, description="自信ありレースのみ"),
     db: Session = Depends(get_db),
 ) -> dict:
     target = date.today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
@@ -47,8 +48,16 @@ def predictions_today(
         )
         if not pred:
             continue
-        items.append(prediction_item_from_db(card, pred))
-    return {"date": target.isoformat(), "count": len(items), "items": items}
+        item = prediction_item_from_db(card, pred)
+        if confident_only and not item.get("is_confident"):
+            continue
+        items.append(item)
+    return {
+        "date": target.isoformat(),
+        "count": len(items),
+        "items": items,
+        "confident_only": confident_only,
+    }
 
 
 @router.get("/predictions/{race_card_id}")
