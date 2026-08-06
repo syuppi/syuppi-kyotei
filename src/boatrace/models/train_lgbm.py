@@ -412,7 +412,7 @@ def train_lgbm(
             "valid_no_ranker": valid_no_ranker,
         },
         "feature_importance": importance,
-        "version": "hitrate_v3",
+        "version": "hitrate_v4",
     }
     joblib.dump(payload, model_path)
     logger.info("model_saved", path=str(model_path), valid=valid_m)
@@ -560,7 +560,7 @@ def retrain_all_before_today(
             "trained_at": date.today().isoformat(),
             "metrics": metrics,
             "feature_importance": importance,
-            "version": "hitrate_v3",
+            "version": "hitrate_v4",
         },
         path,
     )
