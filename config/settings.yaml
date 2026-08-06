@@ -28,6 +28,9 @@ prediction:
   win_candidates: 3
   sanrenpuku_candidates: 5
   sanrentan_candidates: 5
+  confidence_enabled: true
+  confidence_threshold: 0.65
+  confidence_target_coverage: 0.30
 
 learning:
   min_samples_for_bias: 20

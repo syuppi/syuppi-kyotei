@@ -47,6 +47,10 @@ class PredictionConfig(BaseModel):
     win_candidates: int = 3
     sanrenpuku_candidates: int = 5
     sanrentan_candidates: int = 5
+    # 自信ありレース選別（3連複的中メタモデル）
+    confidence_threshold: float = 0.65
+    confidence_target_coverage: float = 0.30
+    confidence_enabled: bool = True
 
 
 class LearningConfig(BaseModel):

@@ -158,6 +158,15 @@ class PredictionService:
         except Exception as e:  # noqa: BLE001
             logger.warning("narrative_annotate_failed", race_card_id=race_card_id, error=str(e))
 
+        # 的中しやすいレースの自信度（場・選手・天候・モデル出力から学習）
+        if self.settings.prediction.confidence_enabled:
+            try:
+                from boatrace.prediction.confidence import attach_confidence
+
+                attach_confidence(features, result)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("confidence_attach_failed", race_card_id=race_card_id, error=str(e))
+
         if persist:
             self._save(race_card_id, result)
         return result
@@ -266,4 +275,7 @@ class PredictionService:
             "styles": snap.get("styles") or {},
             "delay_thesis": snap.get("delay_thesis") or "",
             "delay_upset": snap.get("delay_upset") or {},
+            "confidence": snap.get("confidence") or {},
+            "is_confident": bool((snap.get("confidence") or {}).get("is_confident")),
+            "confidence_score": (snap.get("confidence") or {}).get("score"),
         }

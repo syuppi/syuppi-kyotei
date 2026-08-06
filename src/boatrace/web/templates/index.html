@@ -4,7 +4,7 @@
 <section class="hero-panel">
   <p class="eyebrow">Daily Predictions</p>
   <h1>本日の各レース予測</h1>
-  <p class="lede">場を選んでから解析します。予想には本命／対抗／穴の根拠を付け、確定後は的中・外れの復習も表示します。</p>
+  <p class="lede">場を選んでから解析します。自信のあるレースを優先表示でき、予想には本命／対抗／穴の根拠を付けます。確定後は的中・外れの復習も表示します。</p>
   <div class="controls">
     <label>日付 <input type="date" id="day" /></label>
     <label>場
@@ -15,6 +15,7 @@
     <label>表示
       <select id="hit-filter">
         <option value="all">すべて</option>
+        <option value="confident">自信ありのみ</option>
         <option value="any_hit">的中のみ（いずれか）</option>
         <option value="win_hit">単勝的中のみ</option>
         <option value="trio_hit">3連複的中のみ</option>
@@ -26,6 +27,7 @@
     <label>並び
       <select id="hit-sort">
         <option value="venue">場→レース順</option>
+        <option value="confidence">自信度順</option>
         <option value="hit_desc">的中優先</option>
         <option value="hit_asc">外れ優先</option>
         <option value="race_no">レース番号順</option>
@@ -44,7 +46,7 @@
 <section id="list" class="race-list" aria-live="polite"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=trio-delay-ana-1"></script>
+<script src="/static/app.js?v=confident-picker-1"></script>
 <script>
   bootPredictions();
 </script>

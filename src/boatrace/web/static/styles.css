@@ -213,6 +213,16 @@ input, select {
   border-color: rgba(240, 180, 41, 0.35);
 }
 .race-thesis.delay strong { color: var(--accent-2); }
+.race-thesis.confidence {
+  background: rgba(110, 168, 254, 0.08);
+  border-color: rgba(110, 168, 254, 0.35);
+}
+.race-thesis.confidence strong { color: #8ec0ff; }
+.race-thesis.confidence ul {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+  color: #c7dbe0;
+}
 .why-short {
   font-size: 0.78rem;
   color: var(--muted);

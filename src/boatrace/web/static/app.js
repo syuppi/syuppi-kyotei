@@ -178,8 +178,9 @@ function filterAndSortPrepared(prepared) {
   const sort = sortEl ? sortEl.value : "venue";
 
   let rows = prepared.slice();
-  rows = rows.filter(({ hits }) => {
+  rows = rows.filter(({ hits, item }) => {
     if (filter === "all") return true;
+    if (filter === "confident") return Boolean(item.is_confident || (item.confidence || {}).is_confident);
     if (filter === "any_hit") return hits.anyHit;
     if (filter === "win_hit") return hits.hitWin;
     if (filter === "trio_hit") return hits.hitTrio;
@@ -191,7 +192,12 @@ function filterAndSortPrepared(prepared) {
 
   const score = (h) => (h.hitTf ? 4 : 0) + (h.hitTrio ? 2 : 0) + (h.hitWin ? 1 : 0);
   rows.sort((a, b) => {
-    if (sort === "hit_desc") {
+    if (sort === "confidence") {
+      const ca = Number(a.item.confidence_score ?? a.item.confidence?.score ?? 0);
+      const cb = Number(b.item.confidence_score ?? b.item.confidence?.score ?? 0);
+      const d = cb - ca;
+      if (d) return d;
+    } else if (sort === "hit_desc") {
       const d = score(b.hits) - score(a.hits);
       if (d) return d;
     } else if (sort === "hit_asc") {
@@ -367,6 +373,9 @@ function renderPredictions() {
   const compact = document.getElementById("compact-mode")?.checked;
 
   const upsetCount = prepared.filter((x) => x.item.has_upset).length;
+  const confidentRows = prepared.filter((x) => x.item.is_confident || x.item.confidence?.is_confident);
+  const confidentSettled = confidentRows.filter((x) => x.hits.hasResult);
+  const confidentTrio = confidentSettled.filter((x) => x.hits.hitTrio).length;
   const hitAny = prepared.filter((x) => x.hits.anyHit).length;
   const hitTf = prepared.filter((x) => x.hits.hitTf).length;
   const hitTrio = prepared.filter((x) => x.hits.hitTrio).length;
@@ -375,6 +384,8 @@ function renderPredictions() {
   summary.innerHTML = `
     <div class="stat"><div class="label">対象レース</div><div class="value">${data.count}</div></div>
     <div class="stat"><div class="label">表示中</div><div class="value">${filtered.length}</div></div>
+    <div class="stat"><div class="label">自信あり</div><div class="value">${confidentRows.length}<span class="sub"> / ${prepared.length}</span></div></div>
+    <div class="stat"><div class="label">自信あり3連複</div><div class="value">${confidentTrio}<span class="sub"> / ${confidentSettled.length || 0}</span></div></div>
     <div class="stat"><div class="label">的中（いずれか）</div><div class="value">${hitAny}<span class="sub"> / ${settled}</span></div></div>
     <div class="stat"><div class="label">3連複 / 3連単的中</div><div class="value">${hitTrio} / ${hitTf}</div></div>
     <div class="stat"><div class="label">穴候補あり</div><div class="value">${upsetCount}</div></div>
@@ -407,6 +418,20 @@ function renderPredictions() {
       : "";
     const delayThesis = item.delay_thesis
       ? `<div class="race-thesis delay"><strong>本命遅れ時</strong><p>${item.delay_thesis}</p></div>`
+      : "";
+    const conf = item.confidence || {};
+    const confScore = item.confidence_score ?? conf.score;
+    const confBadge = conf.is_confident || item.is_confident
+      ? `<span class="badge hit">自信あり ${confScore != null ? Math.round(Number(confScore) * 100) + "%" : ""}</span>`
+      : (conf.label
+        ? `<span class="badge">${conf.label}${confScore != null ? " " + Math.round(Number(confScore) * 100) + "%" : ""}</span>`
+        : "");
+    const confReasons = (conf.reasons || []).slice(0, compact ? 2 : 4)
+      .map((r) => `<li>${r}</li>`).join("");
+    const confBlock = confScore != null
+      ? `<div class="race-thesis confidence"><strong>自信度 ${Math.round(Number(confScore) * 100)}%（${conf.label || "—"}）</strong>
+          ${confReasons ? `<ul>${confReasons}</ul>` : "<p>場・選手・天候・モデル出力から推定</p>"}
+        </div>`
       : "";
     const ticketReasons = item.ticket_reasons || {};
 
@@ -544,12 +569,14 @@ function renderPredictions() {
         <div class="race-head">
           <h2>${item.venue_name} ${item.race_no}R <span class="badge">${item.model_name || ""}</span>
             ${oddsBadge}
+            ${confBadge}
             ${item.has_upset ? '<span class="badge upset">穴あり</span>' : ""}
             ${item.status === "scheduled" ? '<span class="badge">予想中</span>' : ""}
           </h2>
           ${resultHtml}
         </div>
         ${thesis}
+        ${confBlock}
         ${delayThesis}
         <div class="wakus">${wakus}</div>
         <div class="ticket-grid">
