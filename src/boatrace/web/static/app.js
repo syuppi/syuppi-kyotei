@@ -405,6 +405,9 @@ function renderPredictions() {
     const thesis = item.race_thesis
       ? `<div class="race-thesis"><strong>展開の読み</strong><p>${item.race_thesis}</p></div>`
       : "";
+    const delayThesis = item.delay_thesis
+      ? `<div class="race-thesis delay"><strong>本命遅れ時</strong><p>${item.delay_thesis}</p></div>`
+      : "";
     const ticketReasons = item.ticket_reasons || {};
 
     const reasonDetails = (kind, t) => {
@@ -547,6 +550,7 @@ function renderPredictions() {
           ${resultHtml}
         </div>
         ${thesis}
+        ${delayThesis}
         <div class="wakus">${wakus}</div>
         <div class="ticket-grid">
           ${ticketBlock("単勝 候補", wins, "win")}

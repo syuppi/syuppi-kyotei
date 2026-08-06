@@ -56,14 +56,12 @@ HITRATE_EXTRA_FEATURES: list[str] = [
     "previous_st_raw",
 ]
 
-# 評価指標
+# 評価指標（主目的は3連系）
 EVAL_METRICS: list[str] = [
-    "win_hit",  # 本命1着的中
+    "trio_rate",  # 3連複カバー的中（主）
+    "trifecta_top3_rate",  # 3連単3点カバー（主）
+    "trifecta_rate",  # 3連単1点
     "favorite_in_top3",  # 本命が3着以内
-    "always1_baseline",  # 常時1号艇ベースラインとの差分
-    "course1_fly_precision",  # 飛び予測が当たった率
-    "course1_fly_recall",
-    "fav1_rate",  # 本命多様性
-    "venue_slice_win",
-    "weather_slice_win",
+    "course1_fly_precision",
+    "win_hit",  # 参考（単勝は主指標にしない）
 ]

@@ -433,7 +433,12 @@ class LearningService:
             .one_or_none()
         )
         if tide_acc and all_acc and tide_acc.n_races >= 5:
-            if tide_acc.win_rate < all_acc.win_rate - 0.05:
+            # 3連複を主指標に（単勝は参考）
+            tide_trio = float(getattr(tide_acc, "trio_rate", 0) or 0)
+            all_trio = float(getattr(all_acc, "trio_rate", 0) or 0)
+            if tide_trio < all_trio - 0.05 or (
+                tide_acc.win_rate < all_acc.win_rate - 0.05 and tide_trio <= all_trio
+            ):
                 weights["tide_adjustment"] = weights.get("tide_adjustment", 0.06) + lr
 
         head_acc = (
@@ -447,10 +452,38 @@ class LearningService:
             .one_or_none()
         )
         if head_acc and all_acc and head_acc.n_races >= 5:
-            if head_acc.win_rate < all_acc.win_rate - 0.05:
+            head_trio = float(getattr(head_acc, "trio_rate", 0) or 0)
+            all_trio = float(getattr(all_acc, "trio_rate", 0) or 0)
+            if head_trio < all_trio - 0.05:
                 weights["wind_course_bias"] = weights.get("wind_course_bias", 0.06) + lr
                 weights["venue_course_win_rate"] = (
                     weights.get("venue_course_win_rate", 0.22) + lr * 0.5
+                )
+                # 向かい風で3連が崩れる → 展示STを厚く
+                weights["exhibition_st_advantage"] = (
+                    weights.get("exhibition_st_advantage", 0.11) + lr * 0.5
+                )
+
+        fly_acc = (
+            self.session.query(AccuracyDaily)
+            .filter_by(
+                stat_date=race_date,
+                slice_key="pred_course1_fly",
+                model_name=model_name,
+                venue_id=None,
+            )
+            .one_or_none()
+        )
+        if fly_acc and all_acc and fly_acc.n_races >= 5:
+            fly_trio = float(getattr(fly_acc, "trio_rate", 0) or 0)
+            all_trio = float(getattr(all_acc, "trio_rate", 0) or 0)
+            # 飛び想定レースで3連が弱い → 展示・当地を強化
+            if fly_trio < all_trio - 0.04:
+                weights["exhibition_st_advantage"] = (
+                    weights.get("exhibition_st_advantage", 0.11) + lr
+                )
+                weights["exhibition_advantage"] = (
+                    weights.get("exhibition_advantage", 0.13) + lr * 0.5
                 )
 
         # クリップ: 初期値の 0.4〜2.0 倍に制限

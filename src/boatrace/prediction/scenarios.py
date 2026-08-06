@@ -200,10 +200,47 @@ def build_exhibition_scenarios(
     scenarios.sort(key=lambda s: (-abs(s["delta_pt"]), s["after_rank"]))
     scenarios = scenarios[:max_scenarios]
 
+    # 本命遅れシナリオから受益艇（順位を上げた艇）を抽出
+    delay_keys = {
+        f"fav_st_slow_{favorite}",
+        f"fav_time_slow_{favorite}",
+        f"hypo_fav_slow_{favorite}",
+        "hypo_in_bad",
+    }
+    delay_gainers: list[dict[str, Any]] = []
+    for sc in scenarios:
+        if sc.get("key") not in delay_keys:
+            continue
+        after = sc.get("after_rankings") or []
+        for w in after:
+            if w == favorite:
+                continue
+            before_r = _rank_of(base_rankings, w)
+            after_r = _rank_of(after, w)
+            if after_r < before_r:
+                delay_gainers.append(
+                    {
+                        "waku": w,
+                        "before_rank": before_r,
+                        "after_rank": after_r,
+                        "via": sc.get("key"),
+                    }
+                )
+    # 順位上昇幅でユニーク化
+    seen: set[int] = set()
+    delay_beneficiaries: list[int] = []
+    for g in sorted(delay_gainers, key=lambda x: (x["after_rank"] - x["before_rank"], x["after_rank"])):
+        if g["waku"] in seen:
+            continue
+        seen.add(g["waku"])
+        delay_beneficiaries.append(int(g["waku"]))
+
     return {
         "status": status,
         "status_comments": status_comments,
         "baseline_rankings": base_rankings[:3],
         "scenarios": scenarios,
         "comments": status_comments + [s["comment"] for s in scenarios],
+        "delay_beneficiaries": delay_beneficiaries,
+        "favorite": favorite,
     }

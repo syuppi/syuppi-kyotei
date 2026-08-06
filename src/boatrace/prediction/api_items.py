@@ -54,6 +54,8 @@ def prediction_item_from_db(card: RaceCard, pred: PredictHistory) -> dict[str, A
         "race_thesis": snap.get("race_thesis") or "",
         "ticket_reasons": snap.get("ticket_reasons") or {},
         "styles": snap.get("styles") or {},
+        "delay_thesis": snap.get("delay_thesis") or "",
+        "delay_upset": snap.get("delay_upset") or {},
         "sanrentan": [
             t.get("combo") for t in tickets.get("sanrentan", []) if t.get("combo")
         ]

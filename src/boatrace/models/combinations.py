@@ -264,11 +264,13 @@ def select_diverse_trifectas(
     ordered: list[tuple[tuple[int, int, int], float]],
     *,
     limit: int = 3,
+    delay_heads: list[int] | None = None,
 ) -> list[tuple[list[int], float]]:
     """
     カバー効率の良い3連単候補を選ぶ。
     - 1点目: 最高確率
     - 2点目以降: 同じ3艇の別順列より、異なる艇セット / 異なる1着 を優先
+    - 3点目候補に delay_heads があれば優先採用
     """
     if not ordered:
         return []
@@ -276,7 +278,6 @@ def select_diverse_trifectas(
     used_sets: list[frozenset[int]] = []
     used_winners: set[int] = set()
 
-    # まず本命
     top_t, top_p = ordered[0]
     selected.append((list(top_t), float(top_p)))
     used_sets.append(frozenset(top_t))
@@ -286,14 +287,29 @@ def select_diverse_trifectas(
         if len(selected) >= limit:
             break
         key = frozenset(ticket)
-        # すでに選んだセットの別順列は後回し
         if key in used_sets:
             continue
         selected.append((list(ticket), float(p)))
         used_sets.append(key)
         used_winners.add(ticket[0])
 
-    # 足りなければ、異なる1着の順列を追加
+    if len(selected) < limit:
+        prefer = set(int(x) for x in (delay_heads or []))
+        for ticket, p in ordered[1:]:
+            if len(selected) >= limit:
+                break
+            if prefer and ticket[0] not in prefer:
+                continue
+            if list(ticket) in [s[0] for s in selected]:
+                continue
+            if ticket[0] in used_winners and frozenset(ticket) in used_sets:
+                continue
+            if frozenset(ticket) in used_sets and ticket[0] in used_winners:
+                continue
+            selected.append((list(ticket), float(p)))
+            used_sets.append(frozenset(ticket))
+            used_winners.add(ticket[0])
+
     if len(selected) < limit:
         for ticket, p in ordered[1:]:
             if len(selected) >= limit:
@@ -302,14 +318,12 @@ def select_diverse_trifectas(
                 continue
             if ticket[0] in used_winners and frozenset(ticket) in used_sets:
                 continue
-            # 同じセットでも1着が違えばカバーになる場合あり
             if frozenset(ticket) in used_sets and ticket[0] in used_winners:
                 continue
             selected.append((list(ticket), float(p)))
             used_sets.append(frozenset(ticket))
             used_winners.add(ticket[0])
 
-    # それでも足りなければ確率順で埋める
     if len(selected) < limit:
         have = {tuple(s[0]) for s in selected}
         for ticket, p in ordered:
@@ -326,14 +340,35 @@ def select_diverse_trios(
     trio_ranked: list[tuple[frozenset[int], float]],
     *,
     limit: int = 3,
+    delay_boats: list[int] | None = None,
 ) -> list[tuple[list[int], float]]:
-    """3連複: 重複の少ないセットを上位から."""
+    """3連複: 重複の少ないセットを上位から。穴枠は受益艇含有を優先."""
     out: list[tuple[list[int], float]] = []
+    used: set[frozenset[int]] = set()
+    for key, p in trio_ranked:
+        if len(out) >= max(1, limit - (1 if delay_boats else 0)):
+            break
+        if key in used:
+            continue
+        out.append((sorted(key), float(p)))
+        used.add(key)
+    delay_set = set(int(x) for x in (delay_boats or []))
+    if len(out) < limit and delay_set:
+        for key, p in trio_ranked:
+            if key in used:
+                continue
+            if set(key) & delay_set:
+                out.append((sorted(key), float(p)))
+                used.add(key)
+                break
     for key, p in trio_ranked:
         if len(out) >= limit:
             break
+        if key in used:
+            continue
         out.append((sorted(key), float(p)))
-    return out
+        used.add(key)
+    return out[:limit]
 
 
 def merge_ordered_lists(
@@ -364,14 +399,15 @@ def build_combination_bundle(
     n_sanrenpuku: int = 3,
     n_sanrentan: int = 3,
     prior_weight: float = 0.08,
+    fly_risk: float = 0.0,
+    delay_beneficiaries: list[int] | None = None,
 ) -> dict[str, Any]:
-    """3連単・3連複の本命と候補をまとめて返す。"""
+    """3連単・3連複の本命と候補をまとめて返す（3着以内カバー優先）."""
     top2 = top2_probs or {w: min(0.95, p * 1.6 + 0.05) for w, p in win_probs.items()}
     top3 = top3_probs or {w: min(0.95, p * 2.2 + 0.08) for w, p in win_probs.items()}
     top2 = {w: float(max(0.01, min(0.98, v))) for w, v in top2.items()}
     top3 = {w: float(max(0.01, min(0.98, v))) for w, v in top3.items()}
 
-    # ランカーは枠リークが残りやすいので弱め
     strengths = blend_place_strengths(
         win_probs, top2, top3, rank_scores=rank_scores, w_win=0.50, w_top2=0.22, w_top3=0.18, w_rank=0.10
     )
@@ -386,14 +422,25 @@ def build_combination_bundle(
     ordered_cond = conditional_chain_ordered(win_probs, second_strengths, third_strengths)
     ordered = merge_ordered_lists(ordered_cond, ordered_pl, w_primary=0.70)
 
-    # 場共起は弱めに混合（強すぎると本命を崩す）
+    fr = float(fly_risk or 0.0)
+    # 穴選抜への受益艇バイアスは飛びリスクが高いときだけ
+    delay_heads = [int(x) for x in (delay_beneficiaries or [])] if fr >= 0.40 else []
+    # 飛びが高いときだけ、受益頭の並びを軽く押し上げ（本線は壊さない）
+    if delay_heads and fr >= 0.45:
+        boost_set = set(delay_heads[:2])
+        reweighted = []
+        for ticket, p in ordered:
+            mult = 1.0 + (0.18 * min(1.0, fr / 0.7) if ticket[0] in boost_set else 0.0)
+            reweighted.append((ticket, p * mult))
+        total = sum(p for _, p in reweighted) or 1.0
+        ordered = sorted(((t, p / total) for t, p in reweighted), key=lambda x: -x[1])
+
     pw = max(0.0, min(0.25, float(prior_weight)))
     if venue_prior and pw > 0:
         reweighted = []
         for ticket, p in ordered:
             key = frozenset(ticket)
             prior = float(venue_prior.get(key, 0.0))
-            # prior は頻度分布。無いセットはわずかに減衰
             boost = 1.0 + pw * ((prior * 15.0) - 0.35) if prior else (1.0 - pw * 0.15)
             reweighted.append((ticket, p * max(0.5, boost)))
         total = sum(p for _, p in reweighted) or 1.0
@@ -408,10 +455,25 @@ def build_combination_bundle(
         merged[key] = 0.55 * p
     for key, p in unordered_pl:
         merged[key] = merged.get(key, 0.0) + 0.45 * p
+    if delay_heads:
+        dset = set(delay_heads[:2])
+        for key in list(merged.keys()):
+            if key & dset and fr >= 0.40:
+                merged[key] *= 1.0 + 0.12 * min(1.0, fr)
+        total = sum(merged.values()) or 1.0
+        merged = {k: v / total for k, v in merged.items()}
     trio_ranked = sorted(merged.items(), key=lambda x: x[1], reverse=True)
 
-    diverse_tf = select_diverse_trifectas(ordered, limit=max(2, min(int(n_sanrentan), 3)))
-    diverse_sp = select_diverse_trios(trio_ranked, limit=max(2, min(int(n_sanrenpuku), 3)))
+    diverse_tf = select_diverse_trifectas(
+        ordered,
+        limit=max(2, min(int(n_sanrentan), 3)),
+        delay_heads=delay_heads,
+    )
+    diverse_sp = select_diverse_trios(
+        trio_ranked,
+        limit=max(2, min(int(n_sanrenpuku), 3)),
+        delay_boats=delay_heads,
+    )
 
     best_order = diverse_tf[0][0] if diverse_tf else list(ordered[0][0])
     strengths_rank = strengths
@@ -454,12 +516,14 @@ def build_combination_bundle(
         for w in sorted(combo, key=lambda x: strengths_rank.get(x, 0.0), reverse=True):
             if w not in covered:
                 covered.append(w)
-            if len(covered) >= 4:
+            if len(covered) >= 5:
                 break
-        if len(covered) >= 4:
+        if len(covered) >= 5:
             break
+    for w in delay_heads:
+        if w not in covered:
+            covered.append(w)
 
-    # 信頼度: 本命3連単確率が薄い場合は広めフラグ
     top_tf_p = st_probs[0] if st_probs else 0.0
     low_confidence = top_tf_p < 0.025
 
@@ -486,4 +550,6 @@ def build_combination_bundle(
         "tickets": tickets,
         "low_confidence": low_confidence,
         "top_trifecta_prob": float(top_tf_p),
+        "delay_beneficiaries": delay_heads,
+        "fly_risk": fr,
     }

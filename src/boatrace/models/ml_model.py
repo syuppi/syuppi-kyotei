@@ -200,6 +200,18 @@ class MLPredictor(BasePredictor):
 
         cfg = get_settings().prediction
         venue_prior = self._venue_prior(features)
+        from boatrace.prediction.delay_upset import (
+            compute_delay_beneficiaries,
+            inject_delay_ana_tickets,
+        )
+
+        delay_info = compute_delay_beneficiaries(
+            features,
+            favorite=max(combo_win, key=combo_win.get) if combo_win else None,
+            win_probs=combo_win,
+            top3_probs=top3_probs,
+            limit=3,
+        )
         bundle = build_combination_bundle(
             combo_win,
             top2_probs,
@@ -210,12 +222,22 @@ class MLPredictor(BasePredictor):
             n_sanrenpuku=cfg.sanrenpuku_candidates,
             n_sanrentan=cfg.sanrentan_candidates,
             prior_weight=0.03,
+            fly_risk=fly_risk,
+            delay_beneficiaries=delay_info.get("beneficiaries") or [],
         )
         # 1着順位は勝率モデルを正とする（3連単本命の1着固定を避ける）
         rankings = sorted(wakus, key=lambda w: win_probs[w], reverse=True)
         quinella = bundle["top2_probs"]
         trio = bundle["top3_probs"]
         tickets = bundle.get("tickets") or {}
+        tickets = inject_delay_ana_tickets(
+            tickets,
+            beneficiaries=delay_info.get("beneficiaries") or [],
+            favorite=rankings[0] if rankings else delay_info.get("favorite"),
+            top3_probs=top3_probs or trio,
+            strengths=bundle.get("strengths"),
+            fly_risk=fly_risk,
+        )
         # 単勝チケットも勝率順で揃える
         if tickets.get("win"):
             win_sorted = rankings[: cfg.win_candidates]
@@ -268,6 +290,11 @@ class MLPredictor(BasePredictor):
         )
         has_upset = margin < get_settings().prediction.upset_margin_threshold
         upset = [w for w in rankings[1:4] if w >= 4] if has_upset else []
+        fav0 = rankings[0] if rankings else None
+        for w in delay_info.get("beneficiaries") or []:
+            if int(w) not in upset and fav0 != int(w):
+                upset.append(int(w))
+        has_upset = has_upset or fly_risk >= 0.40 or bool(delay_info.get("beneficiaries"))
 
         snap = dict(scored.feature_snapshot)
         snap["ml_raw"] = {str(w): float(v) for w, v in zip(wakus, win_raw)}
@@ -285,6 +312,8 @@ class MLPredictor(BasePredictor):
         snap["low_confidence"] = bundle.get("low_confidence")
         snap["top_trifecta_prob"] = bundle.get("top_trifecta_prob")
         snap["has_venue_prior"] = bool(venue_prior)
+        snap["delay_upset"] = delay_info
+        snap["delay_thesis"] = delay_info.get("thesis") or ""
 
         return PredictionResult(
             model_name=self.name,

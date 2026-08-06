@@ -60,6 +60,31 @@ class PredictionService:
             result.feature_snapshot = dict(result.feature_snapshot or {})
             result.feature_snapshot["exhibition"] = exhibition["status"]
             result.feature_snapshot["scenarios"] = exhibition
+            # シナリオ上の本命遅れ受益艇を穴候補に合流
+            scen_bens = exhibition.get("delay_beneficiaries") or []
+            if scen_bens:
+                delay = dict(result.feature_snapshot.get("delay_upset") or {})
+                merged = list(dict.fromkeys(list(delay.get("beneficiaries") or []) + list(scen_bens)))
+                delay["beneficiaries"] = merged
+                delay["scenario_beneficiaries"] = scen_bens
+                result.feature_snapshot["delay_upset"] = delay
+                from boatrace.prediction.delay_upset import inject_delay_ana_tickets
+
+                fav = (result.rankings or [None])[0]
+                enriched_t = inject_delay_ana_tickets(
+                    result.tickets or result.feature_snapshot.get("tickets") or {},
+                    beneficiaries=merged,
+                    favorite=fav,
+                    top3_probs=result.trio_probs,
+                    strengths=None,
+                    fly_risk=float(
+                        (result.feature_snapshot or {}).get("course1_fly_risk")
+                        or features.env.get("course1_fly_risk")
+                        or 0.0
+                    ),
+                )
+                result.tickets = enriched_t
+                result.feature_snapshot["tickets"] = enriched_t
             # 理由の先頭に試走コメントを足す
             status_line = exhibition["status"].get("phase", "")
             extra = exhibition.get("status_comments") or []
@@ -239,4 +264,6 @@ class PredictionService:
             "race_thesis": snap.get("race_thesis") or "",
             "ticket_reasons": snap.get("ticket_reasons") or {},
             "styles": snap.get("styles") or {},
+            "delay_thesis": snap.get("delay_thesis") or "",
+            "delay_upset": snap.get("delay_upset") or {},
         }

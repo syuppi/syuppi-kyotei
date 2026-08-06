@@ -165,13 +165,17 @@ def _ana_bullets(
     env = features.env or {}
     bullets: list[str] = []
     head = combo[0] if combo else None
+    fav = honmei_combo[0] if honmei_combo else None
 
+    if fav is not None:
+        bullets.append(f"本命{fav}号がスタートや1角で遅れた場合の展開")
     if fly_risk >= 0.40:
         bullets.append(f"1号艇飛びリスク{_pct(fly_risk, 0)}でイン崩れを警戒（ワンダー型）")
     makuri = float(env.get("venue_makuri_rate") or 0)
     sashi = float(env.get("venue_sashi_rate") or 0)
-    if makuri + sashi >= 0.30:
-        bullets.append(f"場傾向はまくり{_pct(makuri, 0)}・差し{_pct(sashi, 0)}")
+    kado = float(env.get("venue_kado_strength") or 0)
+    if makuri + sashi >= 0.30 or kado >= 0.25:
+        bullets.append(f"場傾向はまくり{_pct(makuri, 0)}・差し{_pct(sashi, 0)}・カド{_pct(kado, 0)}")
     wb = str(env.get("wind_bucket") or "")
     if wb in {"head", "head_light", "cross"}:
         bullets.append("向かい風・横風帯で差し/まくりが伸びやすい")
@@ -181,12 +185,12 @@ def _ana_bullets(
         raw = (b.raw if b else {}) or {}
         st_gap = raw.get("st_gap_vs_inner")
         if st_gap is not None and float(st_gap) > 0.02:
-            bullets.append(f"{head}号の展示STがインより優位（差{float(st_gap):+.2f}）")
+            bullets.append(f"{head}号の展示STがインより優位（差{float(st_gap):+.2f}）→遅れ時に差せる")
         pressure = raw.get("course1_upset_pressure")
         if pressure is not None and float(pressure) >= 0.20:
             bullets.append(f"{head}号にイン崩れの外圧あり")
         if head in set(upset_candidates or []):
-            bullets.append(f"{head}号は穴候補リストと連動")
+            bullets.append(f"{head}号は本命遅れ時の受益候補")
         if head >= 4:
             bullets.append(f"外枠{head}号頭の展開崩れを拾う")
 
@@ -196,10 +200,6 @@ def _ana_bullets(
 
     if not bullets:
         bullets.append("本命崩れ時の保険の流し（ワンダー型）")
-    else:
-        # 実力差が小さい示唆
-        if kind == "win" and head and honmei_combo:
-            bullets.append("本命との確率差が縮まる局面の保険")
     return bullets[:6]
 
 
@@ -241,12 +241,15 @@ def build_race_narrative(
         thesis_parts.append(f"この場のイン1着率は{_pct(float(in_wr), 0)}。")
     if fly_risk >= 0.45:
         thesis_parts.append(
-            f"一方で1号艇飛びリスク{_pct(fly_risk, 0)}があり、外枠頭の展開崩れ（ワンダー型）も3本目に用意する。"
+            f"一方で1号艇飛びリスク{_pct(fly_risk, 0)}があり、本命がスタート/1角で遅れた場合の展開崩れ（ワンダー型）を3本目に用意する。"
         )
     elif fly_risk >= 0.30:
-        thesis_parts.append(f"飛びリスクは中程度（{_pct(fly_risk, 0)}）。対抗で軽くカバーする。")
+        thesis_parts.append(f"飛びリスクは中程度（{_pct(fly_risk, 0)}）。本命遅れ時の受益艇を穴でカバーする。")
     else:
-        thesis_parts.append("インが残る流れを基調に、穴は保険の流しに留める。")
+        thesis_parts.append("インが残る流れを基調に、穴は本命遅れ時の保険に留める。")
+    delay_thesis = (result.feature_snapshot or {}).get("delay_thesis") or ""
+    if delay_thesis:
+        thesis_parts.append(delay_thesis)
     wind = env.get("wind_speed")
     if wind is not None and float(wind) >= 4:
         thesis_parts.append(f"風速{float(wind):.0f}m帯で決まり手が流れやすい。")

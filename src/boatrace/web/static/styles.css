@@ -208,6 +208,11 @@ input, select {
   margin-bottom: 0.25rem;
 }
 .race-thesis p { margin: 0; color: #c7dbe0; }
+.race-thesis.delay {
+  background: rgba(240, 180, 41, 0.08);
+  border-color: rgba(240, 180, 41, 0.35);
+}
+.race-thesis.delay strong { color: var(--accent-2); }
 .why-short {
   font-size: 0.78rem;
   color: var(--muted);

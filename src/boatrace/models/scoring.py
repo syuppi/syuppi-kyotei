@@ -73,6 +73,19 @@ class ScoringPredictor(BasePredictor):
         quinella_probs = self._place_probs(win_probs, top_n=2)
         trio_probs = self._place_probs(win_probs, top_n=3)
         cfg = self.settings.prediction
+        from boatrace.prediction.delay_upset import (
+            compute_delay_beneficiaries,
+            inject_delay_ana_tickets,
+        )
+
+        fly_risk = float(features.env.get("course1_fly_risk") or 0.0)
+        delay_info = compute_delay_beneficiaries(
+            features,
+            favorite=max(win_probs, key=win_probs.get) if win_probs else None,
+            win_probs=win_probs,
+            top3_probs=trio_probs,
+            limit=3,
+        )
         bundle = build_combination_bundle(
             win_probs,
             quinella_probs,
@@ -80,6 +93,8 @@ class ScoringPredictor(BasePredictor):
             n_win=cfg.win_candidates,
             n_sanrenpuku=cfg.sanrenpuku_candidates,
             n_sanrentan=cfg.sanrentan_candidates,
+            fly_risk=fly_risk,
+            delay_beneficiaries=delay_info.get("beneficiaries") or [],
         )
 
         # 1着はスコア由来の勝率順（3連単の1着固定を避ける）
@@ -88,6 +103,14 @@ class ScoringPredictor(BasePredictor):
         candidates_quinella = bundle["candidates_quinella"]
         candidates_trio = bundle["candidates_trio"]
         tickets = bundle.get("tickets") or {}
+        tickets = inject_delay_ana_tickets(
+            tickets,
+            beneficiaries=delay_info.get("beneficiaries") or [],
+            favorite=rankings[0] if rankings else None,
+            top3_probs=trio_probs,
+            strengths=bundle.get("strengths"),
+            fly_risk=fly_risk,
+        )
         if tickets.get("win"):
             probs = [float(win_probs[w]) for w in candidates_win]
             psum = sum(probs) or 1.0
@@ -103,14 +126,18 @@ class ScoringPredictor(BasePredictor):
             ]
 
         margin = win_probs[rankings[0]] - win_probs[rankings[1]] if len(rankings) > 1 else 1.0
-        has_upset = margin < self.settings.prediction.upset_margin_threshold
+        has_upset = margin < self.settings.prediction.upset_margin_threshold or fly_risk >= 0.40
         upset_candidates: list[int] = []
         if has_upset:
             upset_candidates = [w for w in rankings[1:4] if w >= 4]
-            for boat in features.boats:
-                if boat.values.get("exhibition_advantage", 0) >= 0.95 and boat.waku >= 4:
-                    if boat.waku not in upset_candidates:
-                        upset_candidates.append(boat.waku)
+        for w in delay_info.get("beneficiaries") or []:
+            if w not in upset_candidates and w != rankings[0]:
+                upset_candidates.append(int(w))
+                has_upset = True
+        for boat in features.boats:
+            if boat.values.get("exhibition_advantage", 0) >= 0.95 and boat.waku >= 4:
+                if boat.waku not in upset_candidates:
+                    upset_candidates.append(boat.waku)
 
         reasons = self._build_reasons(features, contribs, win_probs)
         win_labels = [t["label"] for t in tickets.get("win", [])]
@@ -137,6 +164,9 @@ class ScoringPredictor(BasePredictor):
             "sanrentan_probs": bundle["sanrentan_probs"],
             "sanrenpuku_probs": bundle["sanrenpuku_probs"],
             "tickets": tickets,
+            "course1_fly_risk": fly_risk,
+            "delay_upset": delay_info,
+            "delay_thesis": delay_info.get("thesis") or "",
         }
 
         return PredictionResult(
