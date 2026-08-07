@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from boatrace.api.routes import accuracy, collect, predictions, search, venues
 from boatrace.config import get_settings
+from boatrace.jobs.history_warm import start_history_warm, stop_history_warm, warm_status
 from boatrace.jobs.result_refresh import (
     last_refresh,
     missing_result_stats,
@@ -31,9 +32,12 @@ templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 async def lifespan(_app: FastAPI):
     # 10分ごとに当日・前日の着順欠損を自動補完（手動修正待ちを減らす）
     start_background_refresh(interval_sec=600)
+    # Render等: 空DBでも特徴が使えるよう直近履歴を裏取得
+    start_history_warm()
     try:
         yield
     finally:
+        stop_history_warm()
         stop_background_refresh()
 
 
@@ -72,6 +76,8 @@ def health() -> dict:
     stats = missing_result_stats(days=2)
     return {
         "status": "ok",
+        "predict_only": bool(settings.runtime.predict_only),
         "missing_results": stats,
         "last_result_refresh": last_refresh() or None,
+        "history_warm": warm_status(),
     }

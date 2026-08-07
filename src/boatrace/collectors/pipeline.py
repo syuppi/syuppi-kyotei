@@ -152,8 +152,9 @@ def prepare_day(
         except Exception as e:  # noqa: BLE001
             summary["steps"]["tide_error"] = str(e)
 
-    # 前走情報・当日学習（的中改善の自己学習ループ）
+    # 前走情報。学習は predict_only ではスキップ（Render等は別環境で学習）
     try:
+        from boatrace.config import is_predict_only
         from boatrace.db.session import session_scope
         from boatrace.features.previous_starts import backfill_previous_for_day
         from boatrace.learning.service import LearningService
@@ -162,13 +163,15 @@ def prepare_day(
             summary["steps"]["previous_starts"] = backfill_previous_for_day(
                 session, target, venue_ids=venue_ids
             )
-            # 確定レースがあれば場傾向・重みを更新
-            learn = LearningService(session).learn_day(target)
-            summary["steps"]["learn"] = {
-                "date": learn.get("date"),
-                "course_stats_updated": learn.get("course_stats_updated"),
-                "bias_updated": learn.get("bias_updated"),
-            }
+            if is_predict_only():
+                summary["steps"]["learn"] = {"skipped": True, "reason": "predict_only"}
+            else:
+                learn = LearningService(session).learn_day(target)
+                summary["steps"]["learn"] = {
+                    "date": learn.get("date"),
+                    "course_stats_updated": learn.get("course_stats_updated"),
+                    "bias_updated": learn.get("bias_updated"),
+                }
             session.commit()
     except Exception as e:  # noqa: BLE001
         logger.warning("prepare_learn_failed", date=target.isoformat(), error=str(e))

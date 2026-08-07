@@ -58,19 +58,23 @@ def refresh_recent_missing(days: int = 2) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             summary = {"date": d.isoformat(), "error": str(e)}
             logger.warning("result_refresh_failed", date=d.isoformat(), error=str(e))
-        # 着順が増えた日は場傾向・重みを自己学習
+        # 着順が増えた日は場傾向・重みを自己学習（predict_only ではスキップ）
         if isinstance(summary, dict) and int(summary.get("updated") or 0) > 0:
             try:
+                from boatrace.config import is_predict_only
                 from boatrace.features.previous_starts import backfill_previous_for_day
                 from boatrace.learning.service import LearningService
 
                 with session_scope() as session:
                     summary["previous_starts"] = backfill_previous_for_day(session, d)
-                    learn = LearningService(session).learn_day(d)
-                    summary["learn"] = {
-                        "course_stats_updated": learn.get("course_stats_updated"),
-                        "bias_updated": learn.get("bias_updated"),
-                    }
+                    if is_predict_only():
+                        summary["learn"] = {"skipped": True, "reason": "predict_only"}
+                    else:
+                        learn = LearningService(session).learn_day(d)
+                        summary["learn"] = {
+                            "course_stats_updated": learn.get("course_stats_updated"),
+                            "bias_updated": learn.get("bias_updated"),
+                        }
                     session.commit()
             except Exception as e:  # noqa: BLE001
                 summary["learn_error"] = str(e)

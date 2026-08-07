@@ -31,6 +31,15 @@ class CollectConfig(BaseModel):
     request_interval_sec: float = 0.4
 
 
+class RuntimeConfig(BaseModel):
+    """デプロイ形態（Render無料の当日予想など）."""
+
+    # True: 場統計・重み学習をスキップ。予想とデータ取得のみ。
+    predict_only: bool = False
+    # 起動時に直近結果を裏で取得して特徴を暖める日数（0で無効）
+    warm_lookback_days: int = 0
+
+
 class TideConfig(BaseModel):
     jma_base_url: str = "https://www.data.jma.go.jp"
     kaiho_base_url: str = "https://www1.kaiho.mlit.go.jp"
@@ -78,6 +87,7 @@ class AppSettings(BaseModel):
     learning: LearningConfig = Field(default_factory=LearningConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
 
 class EnvOverrides(BaseSettings):
@@ -85,6 +95,9 @@ class EnvOverrides(BaseSettings):
 
     database_url: str | None = None
     log_level: str | None = None
+    predict_only: str | None = None
+    lookback_days: int | None = None
+    warm_lookback_days: int | None = None
 
     model_config = {"env_prefix": "BOATRACE_", "extra": "ignore"}
 
@@ -112,6 +125,14 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def _truthy(v: bool | str | None) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+
 @lru_cache
 def get_settings() -> AppSettings:
     raw = _load_yaml(CONFIG_DIR / "settings.yaml")
@@ -121,6 +142,15 @@ def get_settings() -> AppSettings:
         settings.database.url = env.database_url
     if env.log_level:
         settings.logging.level = env.log_level
+    if env.predict_only is not None and str(env.predict_only).strip() != "":
+        settings.runtime.predict_only = _truthy(env.predict_only)
+    if env.lookback_days is not None:
+        settings.collect.lookback_days = max(0, int(env.lookback_days))
+    if env.warm_lookback_days is not None:
+        settings.runtime.warm_lookback_days = max(0, int(env.warm_lookback_days))
+    elif settings.runtime.predict_only and settings.runtime.warm_lookback_days <= 0:
+        # Render当日予想モードの既定: 特徴用に直近を暖機
+        settings.runtime.warm_lookback_days = max(7, int(settings.collect.lookback_days or 7))
     # sqlite相対パスをプロジェクトルート基準に
     if settings.database.url.startswith("sqlite:///./"):
         rel = settings.database.url.replace("sqlite:///./", "", 1)
@@ -129,6 +159,10 @@ def get_settings() -> AppSettings:
         settings.database.url = f"sqlite:///{abs_path}"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     return settings
+
+
+def is_predict_only() -> bool:
+    return bool(get_settings().runtime.predict_only)
 
 
 @lru_cache

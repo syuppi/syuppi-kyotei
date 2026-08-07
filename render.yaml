@@ -1,0 +1,17 @@
+# Render Blueprint: 当日予想のみ（学習は別環境）
+# Dashboard でこのファイルを使って作成するか、手動で Docker Web Service を作る。
+services:
+  - type: web
+    name: boatrace-predict
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: BOATRACE_PREDICT_ONLY
+        value: "1"
+      - key: BOATRACE_LOOKBACK_DAYS
+        value: "14"
+      - key: BOATRACE_WARM_LOOKBACK_DAYS
+        value: "14"
+      - key: BOATRACE_LOG_LEVEL
+        value: "INFO"
