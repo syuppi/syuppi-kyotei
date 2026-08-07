@@ -29,6 +29,18 @@ python scripts/train_lgbm.py
 
 各場の公式ホームページは広報・ライブ映像中心で、構造化出走表としては公式ポータル／Open APIの方が安定です。
 
+## Render で当日予想だけ公開
+
+無料枠向けに **学習スキップ＋当日予想** モードがあります。
+
+```bash
+# 環境変数
+BOATRACE_PREDICT_ONLY=1
+BOATRACE_WARM_LOOKBACK_DAYS=14
+```
+
+手順は [docs/RENDER.md](docs/RENDER.md) を参照（`Dockerfile` / `render.yaml` 同梱）。
+
 ## 設計
 
 詳細は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照。
