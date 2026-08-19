@@ -16,15 +16,16 @@ from boatrace.timeutil import japan_today
 router = APIRouter()
 
 
-def _confident_counts_by_venue(db: Session, target: date) -> dict[str, int]:
-    """その日の場別・自信ありレース数（PredictHistory.feature_snapshot から）."""
+def _latest_predictions_by_card(
+    db: Session, target: date
+) -> tuple[dict[int, PredictHistory], dict[int, str]]:
+    """その日の最新 PredictHistory を race_card_id → 予想 で返す."""
     rows = (
         db.query(RaceCard, PredictHistory)
         .join(PredictHistory, PredictHistory.race_card_id == RaceCard.id)
         .filter(RaceCard.race_date == target)
         .all()
     )
-    # 同一カードに複数履歴がある場合は最新を優先
     latest: dict[int, PredictHistory] = {}
     card_venue: dict[int, str] = {}
     for card, pred in rows:
@@ -32,6 +33,12 @@ def _confident_counts_by_venue(db: Session, target: date) -> dict[str, int]:
         prev = latest.get(card.id)
         if prev is None or (pred.predicted_at or datetime.min) >= (prev.predicted_at or datetime.min):
             latest[card.id] = pred
+    return latest, card_venue
+
+
+def _confident_counts_by_venue(db: Session, target: date) -> dict[str, int]:
+    """その日の場別・自信ありレース数（PredictHistory.feature_snapshot から）."""
+    latest, card_venue = _latest_predictions_by_card(db, target)
     out: dict[str, int] = {}
     for race_id, pred in latest.items():
         snap = pred.feature_snapshot or {}
@@ -40,6 +47,17 @@ def _confident_counts_by_venue(db: Session, target: date) -> dict[str, int]:
             vid = card_venue.get(race_id)
             if vid:
                 out[vid] = out.get(vid, 0) + 1
+    return out
+
+
+def _predicted_counts_by_venue(db: Session, target: date) -> dict[str, int]:
+    """その日の場別・予想済みレース数."""
+    latest, card_venue = _latest_predictions_by_card(db, target)
+    out: dict[str, int] = {}
+    for race_id in latest:
+        vid = card_venue.get(race_id)
+        if vid:
+            out[vid] = out.get(vid, 0) + 1
     return out
 
 
@@ -76,11 +94,16 @@ def list_venues(
                 "day": target.isoformat(),
                 "items": [],
                 "active_only": True,
+                "race_total": 0,
+                "predicted_total": 0,
                 "confident_total": 0,
                 "autofetched": fetched,
                 "japan_today": japan_today().isoformat(),
             }
         conf_counts = _confident_counts_by_venue(db, target)
+        pred_counts = _predicted_counts_by_venue(db, target)
+        race_total = int(sum(counts.values()))
+        predicted_total = int(sum(pred_counts.values()))
         venue_ids = list(counts.keys())
         if confident_only:
             venue_ids = [vid for vid in venue_ids if conf_counts.get(vid, 0) > 0]
@@ -100,6 +123,7 @@ def list_venues(
                 "tide_station": v.tide_station,
                 "typical_in_advantage": v.typical_in_advantage,
                 "race_count": int(counts.get(v.id) or 0),
+                "predicted_count": int(pred_counts.get(v.id) or 0),
                 "confident_count": int(conf_counts.get(v.id) or 0),
             }
             for v in rows
@@ -108,6 +132,8 @@ def list_venues(
             "day": target.isoformat(),
             "active_only": True,
             "confident_only": confident_only,
+            "race_total": race_total,
+            "predicted_total": predicted_total,
             "confident_total": int(sum(conf_counts.values())),
             "items": items,
             "autofetched": fetched,

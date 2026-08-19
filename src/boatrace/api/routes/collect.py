@@ -42,6 +42,45 @@ def _items_from_db(db: Session, target: date, venue_id: str | None) -> list[dict
     return items
 
 
+@router.post("/day/predict")
+def predict_day_races(
+    day: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    venue_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """出走表取得済みのレースを予想する（再取得なし）。"""
+    target = japan_today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
+    venues = [venue_id] if venue_id else None
+
+    race_q = db.query(RaceCard.id).filter(RaceCard.race_date == target)
+    if venues:
+        race_q = race_q.filter(RaceCard.venue_id.in_(venues))
+    if race_q.limit(1).first() is None:
+        return {
+            "date": target.isoformat(),
+            "error": "no_race_cards",
+            "message": "出走表がありません。先に出走表を取得してください。",
+            "count": 0,
+            "confident_count": 0,
+        }
+
+    svc = PredictionService(db, model="lgbm")
+    svc.predict_day(target, venue_id=venue_id, persist=True)
+    items = _items_from_db(db, target, venue_id)
+    confident_count = sum(
+        1 for item in items if item.get("is_confident") or (item.get("confidence") or {}).get("is_confident")
+    )
+    out = {
+        "date": target.isoformat(),
+        "venue_id": venue_id,
+        "count": len(items),
+        "confident_count": confident_count,
+    }
+    if venue_id:
+        out["items"] = items
+    return out
+
+
 @router.post("/day/fetch-cards")
 def fetch_day_cards(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),

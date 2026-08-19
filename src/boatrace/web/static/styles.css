@@ -129,6 +129,18 @@ input, select {
   transform: none;
   box-shadow: none;
 }
+.btn-primary {
+  background: linear-gradient(135deg, #3ecfad 0%, #2da88e 100%);
+  color: #041018;
+  border: none;
+}
+.btn-primary:hover {
+  box-shadow: 0 10px 24px rgba(62, 207, 173, 0.35);
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
 .btn-secondary {
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
@@ -156,7 +168,7 @@ input, select {
 
 body.is-fetching .controls input,
 body.is-fetching .controls select,
-body.is-fetching .controls .btn:not(#page-reload):not(#fetch-done-reload) {
+body.is-fetching .controls .btn:not(#page-reload):not(#fetch-done-reload):not(#fetch-done-continue) {
   pointer-events: none;
   opacity: 0.72;
 }

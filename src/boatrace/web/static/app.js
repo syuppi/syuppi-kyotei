@@ -27,6 +27,15 @@ function initReloadButtons() {
   bind("header-reload");
   bind("fetch-done-reload");
 
+  const predictAllBtn = document.getElementById("predict-all");
+  const fetchDonePredict = document.getElementById("fetch-done-predict");
+  if (predictAllBtn && fetchDonePredict) {
+    fetchDonePredict.addEventListener("click", () => {
+      hideFetchDoneBanner();
+      predictAllBtn.click();
+    });
+  }
+
   const headerReload = document.getElementById("header-reload");
   if (headerReload && (isStandalonePwa() || window.matchMedia("(max-width: 640px)").matches)) {
     headerReload.hidden = false;
@@ -71,13 +80,15 @@ function updateFetchProgress({ title, detail } = {}) {
   if (detailEl && detail != null) detailEl.textContent = detail;
 }
 
-function showFetchDoneBanner(message) {
+function showFetchDoneBanner(message, { showPredict = false } = {}) {
   const banner = document.getElementById("fetch-done-banner");
   const msgEl = document.getElementById("fetch-done-message");
+  const predictBtn = document.getElementById("fetch-done-predict");
   if (!banner) return;
   if (msgEl) {
     msgEl.textContent = message || "取得が完了しました。ページ更新で最新表示にできます。";
   }
+  if (predictBtn) predictBtn.hidden = !showPredict;
   banner.hidden = false;
 }
 
@@ -247,8 +258,11 @@ async function fillActiveVenues(selectEl, day, opts = {}) {
     const opt = document.createElement("option");
     opt.value = v.id;
     const n = v.race_count != null ? `${v.race_count}R` : "";
+    const p = v.predicted_count != null && v.race_count != null && v.predicted_count < v.race_count
+      ? `未予想${v.race_count - v.predicted_count}`
+      : (v.predicted_count > 0 ? `予想${v.predicted_count}` : "");
     const c = v.confident_count != null ? `自信${v.confident_count}` : "";
-    const meta = [n, c].filter(Boolean).join(" / ");
+    const meta = [n, p, c].filter(Boolean).join(" / ");
     opt.textContent = meta ? `${v.id} ${v.name}（${meta}）` : `${v.id} ${v.name}`;
     if (v.confident_count > 0) opt.dataset.confident = "1";
     selectEl.appendChild(opt);
@@ -417,6 +431,7 @@ async function bootPredictions() {
   const day = document.getElementById("day");
   const venue = document.getElementById("venue");
   const refreshBtn = document.getElementById("refresh");
+  const predictAllBtn = document.getElementById("predict-all");
   const filterEl = document.getElementById("hit-filter");
   const sortEl = document.getElementById("hit-sort");
   const compactEl = document.getElementById("compact-mode");
@@ -424,6 +439,7 @@ async function bootPredictions() {
   const statusEl = document.getElementById("load-status");
   const list = document.getElementById("list");
   const summary = document.getElementById("summary");
+  let _venueSnapshot = null;
   day.value = todayISO();
   loadTicketRankStats().then((stats) => {
     renderTicketRankPanel(document.getElementById("ticket-rank-stats"), stats);
@@ -436,6 +452,82 @@ async function bootPredictions() {
 
   function setAnalyzeEnabled(on) {
     if (refreshBtn) refreshBtn.disabled = !on;
+  }
+
+  function updatePredictAllButton(data) {
+    _venueSnapshot = data || _venueSnapshot;
+    if (!predictAllBtn || !_venueSnapshot) return;
+    const raceTotal = Number(_venueSnapshot.race_total || 0);
+    const predictedTotal = Number(_venueSnapshot.predicted_total || 0);
+    const needsPredict = raceTotal > 0 && predictedTotal < raceTotal;
+    predictAllBtn.hidden = !needsPredict;
+    predictAllBtn.disabled = !needsPredict;
+    if (needsPredict) {
+      const remain = raceTotal - predictedTotal;
+      predictAllBtn.textContent = predictedTotal > 0
+        ? `残り${remain}Rを予想`
+        : `全場を予想（${raceTotal}R）`;
+    } else {
+      predictAllBtn.textContent = "全場を予想";
+    }
+  }
+
+  async function predictAllRaces() {
+    if (!predictAllBtn) return;
+    const raceTotal = Number(_venueSnapshot?.race_total || 0);
+    const predictedTotal = Number(_venueSnapshot?.predicted_total || 0);
+    const remain = Math.max(0, raceTotal - predictedTotal) || raceTotal;
+    setFetchProgress(true, {
+      title: "全場を予想中…",
+      detail: `${remain}レース前後。1〜2分かかることがあります。この画面は閉じずにお待ちください。`,
+    });
+    setStatus("全場を予想中…");
+    predictAllBtn.disabled = true;
+    try {
+      const params = new URLSearchParams({ day: day.value });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 180000);
+      const res = await fetch(`/api/day/predict?${params}`, {
+        method: "POST",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error === "no_race_cards") {
+        throw new Error(data.message || "出走表がありません");
+      }
+      const venueData = await fillActiveVenues(venue, day.value, {
+        confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+      });
+      updatePredictAllButton(venueData);
+      const confN = Number(data.confident_count || 0);
+      const countN = Number(data.count || 0);
+      setStatus(`予想完了（全場 / ${countN}R / 自信あり ${confN}R）`);
+      const doneMsg = isStandalonePwa()
+        ? `予想が完了しました（自信あり ${confN}R）。表示を最新にするには「ページ更新」を押してください。`
+        : `予想が完了しました（${countN}R / 自信あり ${confN}R）。場を選ぶか「自信あり（全場）」で表示できます。`;
+      showFetchDoneBanner(doneMsg, { showPredict: false });
+      if (venue.value) {
+        await load({ prepare: false });
+      } else {
+        clearRaceView(
+          confN > 0
+            ? `予想完了。場を選ぶか「自信あり（全場・${confN}R）」を選んでください。`
+            : "予想完了。場を選ぶとレース一覧を表示します（自信ありレースは少数です）。"
+        );
+      }
+    } catch (e) {
+      const msg = e.name === "AbortError"
+        ? "タイムアウトしました。少し待って再度お試しください"
+        : (e.message || e);
+      setStatus(`予想エラー: ${msg}`);
+      throw e;
+    } finally {
+      predictAllBtn.disabled = false;
+      setFetchProgress(false);
+      updatePredictAllButton(_venueSnapshot);
+    }
   }
 
   function clearRaceView(msg) {
@@ -493,7 +585,8 @@ async function bootPredictions() {
           );
           if (vcount > 0) {
             showFetchDoneBanner(
-              `出走表の取得が完了しました（${vcount}場 / ${rcount}R）。ホーム画面追加時は「ページ更新」を押してください。`
+              `出走表の取得が完了しました（${vcount}場 / ${rcount}R）。次に「全場を予想」を押してください。`,
+              { showPredict: true }
             );
           }
           updateFetchProgress({
@@ -509,6 +602,7 @@ async function bootPredictions() {
         }
       }
 
+      updatePredictAllButton(data);
       setAnalyzeEnabled(Boolean(venue.value));
       if (!hasList) {
         clearRaceView(
@@ -520,9 +614,17 @@ async function bootPredictions() {
         return false;
       }
       if (!venue.value) {
-        const tip = Number(data.confident_total || 0) > 0
-          ? `場を選ぶか「自信あり（全場）」を選んでください（自信あり ${data.confident_total}R）`
-          : "場を選択すると、その場だけ解析・表示します。";
+        const raceTotal = Number(data.race_total || 0);
+        const predictedTotal = Number(data.predicted_total || 0);
+        const confTotal = Number(data.confident_total || 0);
+        let tip;
+        if (confTotal > 0) {
+          tip = `場を選ぶか「自信あり（全場）」を選んでください（自信あり ${confTotal}R）`;
+        } else if (raceTotal > 0 && predictedTotal < raceTotal) {
+          tip = `出走表は取得済み（${raceTotal}R）。「全場を予想」を押すか、場を選んで解析してください。`;
+        } else {
+          tip = "場を選択すると、その場だけ解析・表示します。";
+        }
         clearRaceView(tip);
         setStatus(
           venueConfOnly && venueConfOnly.checked
@@ -653,9 +755,10 @@ async function bootPredictions() {
       // 自信度を付与した直後に場リストの件数を更新
       try {
         const keep = venue.value;
-        await fillActiveVenues(venue, day.value, {
+        const venueData = await fillActiveVenues(venue, day.value, {
           confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
         });
+        updatePredictAllButton(venueData);
         if (keep && [...venue.options].some((o) => o.value === keep)) venue.value = keep;
       } catch (_) { /* ignore */ }
       const oddsN = (data.items || []).filter((x) => x.has_odds).length;
@@ -675,6 +778,9 @@ async function bootPredictions() {
   }
 
   refreshBtn.addEventListener("click", () => load({ prepare: true, force: true }));
+  if (predictAllBtn) {
+    predictAllBtn.addEventListener("click", () => predictAllRaces().catch(() => {}));
+  }
   day.addEventListener("change", async () => {
     const ok = await refreshVenueOptions();
     if (ok) await load({ prepare: false });

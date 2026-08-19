@@ -4,7 +4,7 @@
 <section class="hero-panel">
   <p class="eyebrow">Daily Predictions</p>
   <h1>本日の各レース予測</h1>
-  <p class="lede">場を選んでから解析します。自信ありレースだけに絞ることもできます。未発走でも出走表・展示・天候が揃えば自信度が付きます。初回起動やスリープ復帰後は取得に少し時間がかかることがあります。</p>
+  <p class="lede">まず出走表を取得し、「全場を予想」で自信度を付けます。場を選ぶとその場だけの解析・表示もできます。初回起動やスリープ復帰後は1〜2分かかることがあります。</p>
   <div class="controls">
     <label>日付 <input type="date" id="day" /></label>
     <label>場
@@ -41,6 +41,7 @@
       <span>コンパクト</span>
       <input type="checkbox" id="compact-mode" checked />
     </label>
+    <button type="button" id="predict-all" class="btn btn-primary" hidden>全場を予想</button>
     <button id="refresh" class="btn" disabled>この場を解析</button>
     <button type="button" id="page-reload" class="btn btn-secondary" title="ブラウザの更新の代わり（ホーム画面追加時）">ページ更新</button>
   </div>
@@ -55,6 +56,7 @@
   </div>
   <div id="fetch-done-banner" class="fetch-done-banner" hidden role="status" aria-live="polite">
     <span id="fetch-done-message">取得が完了しました。</span>
+    <button type="button" id="fetch-done-predict" class="btn btn-primary btn-sm" hidden>全場を予想</button>
     <button type="button" id="fetch-done-reload" class="btn btn-secondary btn-sm">ページ更新</button>
     <button type="button" id="fetch-done-continue" class="btn btn-sm">このまま続ける</button>
   </div>
@@ -66,7 +68,7 @@
 <section id="list" class="race-list" aria-live="polite"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=mobile-fetch-ui-1"></script>
+<script src="/static/app.js?v=predict-all-btn-1"></script>
 <script>
   bootPredictions();
 </script>
