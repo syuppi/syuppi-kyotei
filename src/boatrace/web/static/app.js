@@ -849,6 +849,7 @@ function renderPredictions() {
   const confidentRows = prepared.filter((x) => x.item.is_confident || x.item.confidence?.is_confident);
   const confidentSettled = confidentRows.filter((x) => x.hits.hasResult && !x.hits.unverifiable);
   const confidentTrio = confidentSettled.filter((x) => x.hits.hitTrio).length;
+  const confidentTf = confidentSettled.filter((x) => x.hits.hitTf).length;
   const verifiablePrepared = prepared.filter((x) => !x.hits.unverifiable);
   const hitAny = verifiablePrepared.filter((x) => x.hits.anyHit).length;
   const hitTf = verifiablePrepared.filter((x) => x.hits.hitTf).length;
@@ -859,8 +860,9 @@ function renderPredictions() {
   summary.innerHTML = `
     <div class="stat"><div class="label">対象レース</div><div class="value">${data.count}</div></div>
     <div class="stat"><div class="label">表示中</div><div class="value">${filtered.length}</div></div>
-    <div class="stat"><div class="label">自信あり</div><div class="value">${confidentRows.length}<span class="sub"> / ${prepared.length}</span></div></div>
+    <div class="stat"><div class="label">自信あり</div><div class="value">${confidentRows.length}<span class="sub"> / 最大3R</span></div></div>
     <div class="stat"><div class="label">自信あり3連複</div><div class="value">${confidentTrio}<span class="sub"> / ${confidentSettled.length || 0}</span></div></div>
+    <div class="stat"><div class="label">自信あり3連単</div><div class="value">${confidentTf}<span class="sub"> / ${confidentSettled.length || 0}</span></div></div>
     <div class="stat"><div class="label">的中（3連複/3連単）</div><div class="value">${hitAny}<span class="sub"> / ${settled}</span></div></div>
     <div class="stat"><div class="label">3連複 / 3連単的中</div><div class="value">${hitTrio} / ${hitTf}</div></div>
     ${unverifiableN ? `<div class="stat"><div class="label">的中除外</div><div class="value">${unverifiableN}<span class="sub">R</span></div></div>` : ""}
@@ -906,6 +908,9 @@ function renderPredictions() {
       .map((r) => `<li>${r}</li>`).join("");
     const confBlock = confScore != null
       ? `<div class="race-thesis confidence"><strong>自信度 ${Math.round(Number(confScore) * 100)}%（${conf.label || "—"}）</strong>
+          ${conf.is_confident || item.is_confident
+            ? "<p class=\"sub\">1日最大3Rに厳選。3連複は検証値約60%前後、3連単は約20%前後（5回に1回程度）が目安です。</p>"
+            : ""}
           ${confReasons ? `<ul>${confReasons}</ul>` : "<p>場・選手・天候・過去傾向・モデル出力から推定</p>"}
         </div>`
       : "";

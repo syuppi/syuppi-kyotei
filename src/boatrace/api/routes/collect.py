@@ -169,3 +169,14 @@ def refresh_missing_results(
     from boatrace.jobs.result_refresh import refresh_recent_missing
 
     return refresh_recent_missing(days=days)
+
+
+@router.post("/day/preclose-predict")
+def trigger_preclose_predict(
+    day: Optional[str] = Query(None, description="YYYY-MM-DD"),
+) -> dict:
+    """締切前ウィンドウ内のレースを自動予想（手動トリガー）."""
+    from boatrace.jobs.preclose_predict import run_preclose_predict
+
+    target = japan_today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
+    return run_preclose_predict(race_date=target)

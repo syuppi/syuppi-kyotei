@@ -29,8 +29,9 @@ prediction:
   sanrenpuku_candidates: 5
   sanrentan_candidates: 5
   confidence_enabled: true
-  confidence_threshold: 0.70
-  confidence_target_coverage: 0.20
+  confidence_threshold: 0.75
+  confidence_target_coverage: 0.02
+  confidence_max_per_day: 3
 
 learning:
   min_samples_for_bias: 20
@@ -45,3 +46,12 @@ api:
   host: "0.0.0.0"
   port: 8000
   title: "BoatRace Prediction System"
+
+runtime:
+  predict_only: false
+  warm_lookback_days: 0
+
+jobs:
+  preclose_predict_interval_sec: 300
+  preclose_lead_minutes: 45
+  result_refresh_interval_sec: 600

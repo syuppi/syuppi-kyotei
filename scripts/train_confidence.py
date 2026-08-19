@@ -145,7 +145,40 @@ def evaluate_selection(
     }
 
 
+def _auto_date_ranges(session) -> tuple[date, date, date, date]:
+    """DB内の確定レース日付から train/valid を自動分割."""
+    rows = (
+        session.query(RaceCard.race_date)
+        .filter(RaceCard.status == "finished")
+        .distinct()
+        .order_by(RaceCard.race_date)
+        .all()
+    )
+    dates = [r[0] for r in rows if r[0] is not None]
+    if not dates:
+        today = date.today()
+        return today, today, today, today
+    if len(dates) == 1:
+        d = dates[0]
+        return d, d, d, d
+    valid_start = dates[-2] if len(dates) >= 2 else dates[-1]
+    valid_end = dates[-1]
+    train_start = dates[0]
+    train_end = dates[-3] if len(dates) >= 3 else dates[0]
+    return train_start, train_end, valid_start, valid_end
+
+
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train confidence meta-model")
+    parser.add_argument(
+        "--auto-split",
+        action="store_true",
+        help="DB内の確定レース日付から train/valid を自動分割",
+    )
+    args = parser.parse_args()
+
     setup_logging()
     get_settings.cache_clear()
     today = date.today()
@@ -154,6 +187,10 @@ def main() -> None:
     valid_start = today - timedelta(days=7)
     train_end = valid_start - timedelta(days=1)
     train_start = train_end - timedelta(days=59)
+
+    if args.auto_split:
+        with session_scope() as session:
+            train_start, train_end, valid_start, valid_end = _auto_date_ranges(session)
 
     print(
         json.dumps(
@@ -169,6 +206,21 @@ def main() -> None:
     with session_scope() as session:
         X_tr, y_tr, ytf_tr, _ = collect_rows(session, train_start, train_end)
         X_va, y_va, ytf_va, _ = collect_rows(session, valid_start, valid_end)
+        if len(y_tr) < 200 and not args.auto_split:
+            train_start, train_end, valid_start, valid_end = _auto_date_ranges(session)
+            print(
+                json.dumps(
+                    {
+                        "auto_split_fallback": True,
+                        "train": [train_start.isoformat(), train_end.isoformat()],
+                        "valid": [valid_start.isoformat(), valid_end.isoformat()],
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            X_tr, y_tr, ytf_tr, _ = collect_rows(session, train_start, train_end)
+            X_va, y_va, ytf_va, _ = collect_rows(session, valid_start, valid_end)
 
     print(
         {

@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -713,6 +715,7 @@ def attach_confidence(
     tickets = result.tickets or snap.get("tickets") or {}
     focused = False
     if assessment.is_confident:
+        snap["tickets_before_confidence_focus"] = copy.deepcopy(tickets)
         limit = int(get_settings().prediction.sanrentan_candidates or 5)
         tickets = focus_trifecta_on_top_trios(tickets, limit=limit, primary_perms=3)
         result.tickets = tickets
@@ -775,6 +778,98 @@ def attach_confidence(
     }
     result.feature_snapshot = snap
     return assessment
+
+
+def enforce_daily_confidence_cap(
+    session,
+    race_date: date | None = None,
+    *,
+    max_n: int | None = None,
+) -> dict[str, Any]:
+    """1日あたりの「自信あり」をスコア上位 max_n 件に絞る."""
+    from boatrace.db.models import PredictHistory, RaceCard
+    from boatrace.timeutil import japan_today
+
+    target = race_date or japan_today()
+    cfg = get_settings().prediction
+    cap = max(1, int(max_n if max_n is not None else getattr(cfg, "confidence_max_per_day", 3) or 3))
+    thr = float(get_confidence_model().threshold or getattr(cfg, "confidence_threshold", 0.75) or 0.75)
+
+    rows = (
+        session.query(RaceCard, PredictHistory)
+        .join(PredictHistory, PredictHistory.race_card_id == RaceCard.id)
+        .filter(RaceCard.race_date == target)
+        .all()
+    )
+
+    pool: list[dict[str, Any]] = []
+    for card, pred in rows:
+        snap = dict(pred.feature_snapshot or {})
+        conf = snap.get("confidence") or {}
+        score = conf.get("score")
+        if score is None:
+            continue
+        pool.append(
+            {
+                "card": card,
+                "pred": pred,
+                "score": float(score),
+                "snap": snap,
+                "conf": dict(conf),
+            }
+        )
+
+    pool.sort(key=lambda x: (-x["score"], x["card"].venue_id, x["card"].race_no))
+    eligible = [x for x in pool if x["score"] >= thr]
+    keep_pred_ids = {x["pred"].id for x in eligible[:cap]}
+
+    demoted = promoted = 0
+    for item in pool:
+        pred = item["pred"]
+        snap = item["snap"]
+        conf = dict(item["conf"])
+        was_conf = bool(conf.get("is_confident"))
+        should_conf = item["pred"].id in keep_pred_ids
+
+        if was_conf and not should_conf:
+            conf["is_confident"] = False
+            conf["label"] = "普通"
+            conf["tier"] = "mid"
+            reasons = list(conf.get("reasons") or [])
+            reasons.append(f"日次上限（上位{cap}R）のため、自信ありから除外しました。")
+            conf["reasons"] = reasons
+            conf["daily_cap_excluded"] = True
+            if snap.get("tickets_before_confidence_focus"):
+                snap["tickets"] = snap["tickets_before_confidence_focus"]
+                snap.pop("tickets_before_confidence_focus", None)
+                conf["trifecta_focused"] = False
+            demoted += 1
+        elif not was_conf and should_conf:
+            conf["is_confident"] = True
+            conf["label"] = "自信あり"
+            conf["tier"] = "high"
+            conf.pop("daily_cap_excluded", None)
+            promoted += 1
+
+        if was_conf != should_conf or conf != item["conf"]:
+            snap["confidence"] = conf
+            pred.feature_snapshot = snap
+            if snap.get("tickets"):
+                pred.feature_snapshot = snap
+
+    session.flush()
+    payload = {
+        "date": target.isoformat(),
+        "cap": cap,
+        "threshold": thr,
+        "pool_size": len(pool),
+        "eligible": len(eligible),
+        "confident_after": len(keep_pred_ids),
+        "demoted": demoted,
+        "promoted": promoted,
+    }
+    logger.info("daily_confidence_cap_applied", **payload)
+    return payload
 
 
 def ensure_history_confidence(

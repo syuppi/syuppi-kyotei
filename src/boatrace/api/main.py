@@ -13,6 +13,12 @@ from fastapi.templating import Jinja2Templates
 from boatrace.api.routes import accuracy, collect, predictions, search, venues
 from boatrace.config import get_settings
 from boatrace.jobs.history_warm import start_history_warm, stop_history_warm, warm_status
+from boatrace.jobs.preclose_predict import (
+    last_preclose_run,
+    preclose_status,
+    start_background_preclose_predict,
+    stop_background_preclose_predict,
+)
 from boatrace.jobs.result_refresh import (
     last_refresh,
     missing_result_stats,
@@ -46,12 +52,17 @@ async def lifespan(_app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("today_cards_bootstrap_failed", error=str(e))
 
-    start_background_refresh(interval_sec=600)
+    start_background_refresh(interval_sec=settings.jobs.result_refresh_interval_sec)
+    start_background_preclose_predict(
+        interval_sec=settings.jobs.preclose_predict_interval_sec,
+        lead_minutes=settings.jobs.preclose_lead_minutes,
+    )
     start_history_warm()
     try:
         yield
     finally:
         stop_history_warm()
+        stop_background_preclose_predict()
         stop_background_refresh()
 
 
@@ -104,5 +115,7 @@ def health() -> dict:
         },
         "missing_results": stats,
         "last_result_refresh": last_refresh() or None,
+        "preclose_predict": preclose_status(),
+        "last_preclose_predict": last_preclose_run() or None,
         "history_warm": warm_status(),
     }

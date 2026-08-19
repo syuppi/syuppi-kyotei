@@ -200,6 +200,13 @@ class PredictionService:
                 outputs.append(self.to_dict(card, result))
             except Exception as e:  # noqa: BLE001
                 logger.exception("predict_failed", race_card_id=card.id, error=str(e))
+        if persist and self.settings.prediction.confidence_enabled:
+            try:
+                from boatrace.prediction.confidence import enforce_daily_confidence_cap
+
+                enforce_daily_confidence_cap(self.session, target)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("daily_confidence_cap_failed", date=target.isoformat(), error=str(e))
         return outputs
 
     def _save(self, race_card_id: int, result: PredictionResult) -> None:

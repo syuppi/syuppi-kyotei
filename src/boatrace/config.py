@@ -40,6 +40,14 @@ class RuntimeConfig(BaseModel):
     warm_lookback_days: int = 0
 
 
+class JobsConfig(BaseModel):
+    """バックグラウンドジョブ."""
+
+    preclose_predict_interval_sec: int = 300
+    preclose_lead_minutes: int = 45
+    result_refresh_interval_sec: int = 600
+
+
 class TideConfig(BaseModel):
     jma_base_url: str = "https://www.data.jma.go.jp"
     kaiho_base_url: str = "https://www1.kaiho.mlit.go.jp"
@@ -57,8 +65,9 @@ class PredictionConfig(BaseModel):
     sanrenpuku_candidates: int = 5
     sanrentan_candidates: int = 5
     # 自信ありレース選別（3連複的中メタモデル）
-    confidence_threshold: float = 0.70
-    confidence_target_coverage: float = 0.20
+    confidence_threshold: float = 0.75
+    confidence_target_coverage: float = 0.02
+    confidence_max_per_day: int = 3
     confidence_enabled: bool = True
 
 
@@ -88,6 +97,7 @@ class AppSettings(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    jobs: JobsConfig = Field(default_factory=JobsConfig)
 
 
 class EnvOverrides(BaseSettings):
