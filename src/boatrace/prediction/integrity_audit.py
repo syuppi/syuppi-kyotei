@@ -189,9 +189,10 @@ def audit_predictions(
             "win_rate": sum(int(x["hit_win"]) for x in items) / n,
             "trio_rate": sum(int(x["hit_trio"]) for x in items) / n,
             "trifecta_rate": sum(int(x["hit_tf"]) for x in items) / n,
+            "combo_any_rate": sum(int(x["any_hit"]) for x in items) / n,
             "any_rate": sum(int(x["any_hit"]) for x in items) / n,
             "confident_n": sum(int(x["is_confident"]) for x in items),
-            "confident_any_rate": (
+            "confident_combo_any_rate": (
                 sum(int(x["any_hit"]) for x in items if x["is_confident"])
                 / max(1, sum(int(x["is_confident"]) for x in items))
             ),

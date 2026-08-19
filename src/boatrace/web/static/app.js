@@ -383,7 +383,9 @@ function hitFlags(item, wins, sps, sts) {
     hitWin: rawWin,
     hitTrio: rawTrio,
     hitTf: rawTf,
-    anyHit: rawWin || rawTrio || rawTf,
+    // 賭け対象: 3連複 or 3連単のみ
+    anyHit: rawTrio || rawTf,
+    comboHit: rawTrio || rawTf,
     unverifiable: false,
     timingStatus: timing.status,
     timingMessage: timing.message,
@@ -419,7 +421,7 @@ function filterAndSortPrepared(prepared) {
     return true;
   });
 
-  const score = (h) => (h.hitTf ? 4 : 0) + (h.hitTrio ? 2 : 0) + (h.hitWin ? 1 : 0);
+  const score = (h) => (h.hitTf ? 4 : 0) + (h.hitTrio ? 2 : 0);
   rows.sort((a, b) => {
     if (sort === "confidence") {
       const ca = Number(a.item.confidence_score ?? a.item.confidence?.score ?? 0);
@@ -859,7 +861,7 @@ function renderPredictions() {
     <div class="stat"><div class="label">表示中</div><div class="value">${filtered.length}</div></div>
     <div class="stat"><div class="label">自信あり</div><div class="value">${confidentRows.length}<span class="sub"> / ${prepared.length}</span></div></div>
     <div class="stat"><div class="label">自信あり3連複</div><div class="value">${confidentTrio}<span class="sub"> / ${confidentSettled.length || 0}</span></div></div>
-    <div class="stat"><div class="label">的中（いずれか）</div><div class="value">${hitAny}<span class="sub"> / ${settled}</span></div></div>
+    <div class="stat"><div class="label">的中（3連複/3連単）</div><div class="value">${hitAny}<span class="sub"> / ${settled}</span></div></div>
     <div class="stat"><div class="label">3連複 / 3連単的中</div><div class="value">${hitTrio} / ${hitTf}</div></div>
     ${unverifiableN ? `<div class="stat"><div class="label">的中除外</div><div class="value">${unverifiableN}<span class="sub">R</span></div></div>` : ""}
     <div class="stat"><div class="label">穴候補あり</div><div class="value">${upsetCount}</div></div>
@@ -931,7 +933,9 @@ function renderPredictions() {
       const ev = t.ev != null ? Number(t.ev) : null;
       let mark = "";
       if (hits.hasResult && !hits.unverifiable) {
-        if (kind === "win" && Number(t.combo?.[0]) === Number(item.result.rank1)) mark = ' <span class="badge hit">的中</span>';
+        if (kind === "win" && Number(t.combo?.[0]) === Number(item.result.rank1)) {
+          mark = ' <span class="badge">単勝一致</span>';
+        }
         if (kind === "trio") {
           const trueTop3 = [item.result.rank1, item.result.rank2, item.result.rank3];
           const set = new Set((t.combo || []).map(Number));
@@ -1023,7 +1027,7 @@ function renderPredictions() {
         </div>`;
       }
       return `<div class="meta">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}${kim}
-        <span class="badge ${hits.hitWin ? "hit" : "upset"}">${hits.hitWin ? "単勝的中" : "単勝外れ"}</span>
+        <span class="badge ${hits.hitWin ? "" : "upset"}">${hits.hitWin ? "単勝一致" : "単勝外れ"}</span>
         <span class="badge ${hits.hitTrio ? "hit" : "upset"}">${hits.hitTrio ? "3連複的中" : "3連複外れ"}</span>
         <span class="badge ${hits.hitTf ? "hit" : "upset"}">${hits.hitTf ? "3連単的中" : "3連単外れ"}</span>
       </div>`;
@@ -1054,7 +1058,7 @@ function renderPredictions() {
       </div>`;
     })();
 
-    const hitClass = hits.hitTf ? "is-tf-hit" : hits.hitTrio ? "is-trio-hit" : hits.hitWin ? "is-win-hit" : "";
+    const hitClass = hits.hitTf ? "is-tf-hit" : hits.hitTrio ? "is-trio-hit" : "";
 
     return `
       <article class="race ${hitClass} ${compact ? "compact" : ""}" style="animation-delay:${Math.min(idx, 12) * 0.03}s">
@@ -1135,10 +1139,9 @@ async function bootAccuracy() {
   const summary = await jget("/api/accuracy/summary?days=30");
   document.getElementById("acc-summary").innerHTML = `
     <div class="stat"><div class="label">対象レース</div><div class="value">${summary.n_races}</div></div>
-    <div class="stat"><div class="label">単勝(〜3候補)</div><div class="value">${pct(summary.win_rate)}</div></div>
-    <div class="stat"><div class="label">2連対的中率</div><div class="value">${pct(summary.quinella_rate)}</div></div>
     <div class="stat"><div class="label">3連複(〜3候補)</div><div class="value">${pct(summary.trio_rate)}</div></div>
     <div class="stat"><div class="label">3連単(〜3候補)</div><div class="value">${pct(summary.trifecta_rate || 0)}</div></div>
+    <div class="stat"><div class="label">単勝(参考)</div><div class="value">${pct(summary.win_rate)}</div></div>
   `;
   const rankStats = await loadTicketRankStats();
   const panel = document.getElementById("acc-ticket-ranks");
@@ -1170,7 +1173,7 @@ async function bootAccuracy() {
             <tbody>
               ${rows.join("")}
               <tr>
-                <td>いずれか（最大5点）</td>
+                <td>3連複/3連単・いずれか（最大5点）</td>
                 <td>${pct(block.sanrenpuku?.any_rate)}</td>
                 <td>${pct(block.sanrentan?.any_rate)}</td>
               </tr>

@@ -20,8 +20,8 @@
       <select id="hit-filter">
         <option value="all">すべて</option>
         <option value="confident">自信ありのみ</option>
-        <option value="any_hit">的中のみ（いずれか）</option>
-        <option value="win_hit">単勝的中のみ</option>
+        <option value="any_hit">的中のみ（3連複/3連単）</option>
+        <option value="win_hit">単勝一致のみ（参考）</option>
         <option value="trio_hit">3連複的中のみ</option>
         <option value="trifecta_hit">3連単的中のみ</option>
         <option value="miss">外れのみ</option>
@@ -68,7 +68,7 @@
 <section id="list" class="race-list" aria-live="polite"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=hit-verify-trends-1"></script>
+<script src="/static/app.js?v=combo-hit-only-1"></script>
 <script>
   bootPredictions();
 </script>

@@ -88,7 +88,9 @@ def compute_hit_flags(
         "hit_win": hit_win,
         "hit_trio": hit_trio,
         "hit_tf": hit_tf,
-        "any_hit": hit_win or hit_trio or hit_tf,
+        # 賭け対象は3連複/3連単のみ。単勝的中は集計・フィルタの「的中」に含めない。
+        "any_hit": hit_trio or hit_tf,
+        "combo_hit": hit_trio or hit_tf,
         "win_hit_label": win_hit_label,
         "trio_hit_label": trio_hit_label,
         "tf_hit_label": tf_hit_label,
@@ -300,14 +302,12 @@ def _ticket_hit_bullets(
 def _lesson_summary(hits: dict[str, Any], bullets: list[str]) -> str:
     if hits.get("hit_tf"):
         head = "3連単まで的中。並びまで読めた好例。"
-    elif hits.get("hit_trio") and hits.get("hit_win"):
-        head = "単勝と3連複が的中。軸とメンバーは当たったが並びは外れた。"
-    elif hits.get("hit_win"):
-        head = "単勝は的中。軸は正しいが3連のカバーが足りなかった。"
     elif hits.get("hit_trio"):
-        head = "3連複のみ的中。軸の単勝を外しつつメンバーは拾えた。"
+        head = "3連複的中。メンバーは合っていた。"
+    elif hits.get("hit_win"):
+        head = "単勝のみ一致（3連複/3連単は外れ）。賭け対象の的中には含めない。"
     else:
-        head = "候補はいずれも外れ。展開または軸選定の見直し材料。"
+        head = "3連複・3連単とも外れ。展開またはカバーの見直し材料。"
     detail = bullets[0] if bullets else ""
     return f"{head}{detail}"
 
@@ -404,13 +404,15 @@ def build_result_review(
 
     headline = _lesson_summary(hits, context)
 
-    verdict = "hit" if hits.get("any_hit") else "miss"
+    verdict = "miss"
     if hits.get("hit_tf"):
         verdict = "tf_hit"
     elif hits.get("hit_trio"):
         verdict = "trio_hit"
+    elif hits.get("any_hit"):
+        verdict = "combo_hit"
     elif hits.get("hit_win"):
-        verdict = "win_hit"
+        verdict = "win_only"
 
     return {
         "verdict": verdict,

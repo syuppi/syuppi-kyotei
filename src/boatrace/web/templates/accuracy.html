@@ -4,13 +4,13 @@
 <section class="hero-panel compact">
   <p class="eyebrow">Accuracy</p>
   <h1>予測精度の検証</h1>
-  <p class="lede">直近の1着・2連対・3連対的中率と、候補順位別の的中しやすさ、条件帯別の比較です。</p>
+  <p class="lede">直近の3連複・3連単的中率と、候補順位別の的中しやすさ、条件帯別の比較です（単勝は賭け対象外のため集計に含めません）。</p>
 </section>
 <section id="acc-summary" class="summary-row"></section>
 <section id="acc-ticket-ranks" class="ticket-rank-panel"></section>
 <section id="acc-table" class="table-wrap"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=ticket-rank-stats-1"></script>
+<script src="/static/app.js?v=combo-hit-only-1"></script>
 <script>bootAccuracy();</script>
 {% endblock %}
