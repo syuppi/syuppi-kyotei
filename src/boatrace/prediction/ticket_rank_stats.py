@@ -171,7 +171,7 @@ def compute_live_ticket_rank_stats(
             "end": max_d.isoformat() if max_d else None,
         },
         "n_races": max(int(trio["n"]), int(tf["n"])),
-        "note": "保存済み予想の候補順位別的中。候補点数はレースにより異なる場合あり。",
+        "note": "保存済み予想の候補順位別的中。締切前の予想のみ集計（結果後の再予想は除外）。",
         "sanrenpuku": pack(trio, labels),
         "sanrentan": pack(tf, labels),
     }
@@ -188,10 +188,20 @@ def get_ticket_rank_stats(session: Session | None = None, *, days: int = 14) -> 
     live = compute_live_ticket_rank_stats(session, days=days)
     if live:
         out["live"] = live
-        # 5点カバーが十分あるときだけライブを主表示に
+        # 締切前予想が十分あるときだけライブを主表示（結果後再予想の見かけ公表を防ぐ）
+        from boatrace.prediction.integrity_audit import audit_predictions
+
+        audit = audit_predictions(session, days=days)
+        pre_n = int(
+            ((audit.get("ticket_ranks") or {}).get("pre_close_only") or {})
+            .get("sanrenpuku", {})
+            .get("n_races", 0)
+            or 0
+        )
+        unreliable = bool((audit.get("published_risk") or {}).get("live_stats_unreliable"))
         trio_ranks = live.get("sanrenpuku", {}).get("ranks") or []
         has_r5 = any(r.get("rank") == 5 and int(r.get("offered") or 0) >= 80 for r in trio_ranks)
-        if has_r5:
+        if has_r5 and pre_n >= 80 and not unreliable:
             out["display"] = live
     return out
 
