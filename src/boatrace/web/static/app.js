@@ -28,7 +28,7 @@ function initReloadButtons() {
   bind("fetch-done-reload");
 
   const headerReload = document.getElementById("header-reload");
-  if (headerReload && isStandalonePwa()) {
+  if (headerReload && (isStandalonePwa() || window.matchMedia("(max-width: 640px)").matches)) {
     headerReload.hidden = false;
   }
 
