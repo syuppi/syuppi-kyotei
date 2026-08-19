@@ -19,6 +19,7 @@ from boatrace.jobs.preclose_predict import (
     start_background_preclose_predict,
     stop_background_preclose_predict,
 )
+from boatrace.prediction.offline_eval import report_status
 from boatrace.jobs.result_refresh import (
     last_refresh,
     missing_result_stats,
@@ -37,6 +38,13 @@ templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    try:
+        from boatrace.prediction.offline_eval import load_offline_eval_report
+
+        load_offline_eval_report(reload=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("offline_eval_report_bootstrap_failed", error=str(e))
+
     try:
         from boatrace.jobs.today_bootstrap import ensure_today_cards
 
@@ -117,5 +125,6 @@ def health() -> dict:
         "last_result_refresh": last_refresh() or None,
         "preclose_predict": preclose_status(),
         "last_preclose_predict": last_preclose_run() or None,
+        "offline_eval": report_status(),
         "history_warm": warm_status(),
     }

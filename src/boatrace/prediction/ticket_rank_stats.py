@@ -11,60 +11,14 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from boatrace.db.models import PredictHistory, RaceCard, RaceResult
+from boatrace.prediction.offline_eval import get_baseline_ticket_rank_stats
 from boatrace.prediction.timing import is_hit_verifiable
 
-# 2026-07-30〜08-05 / 現行5点カバー再予想（展示あり）
-BASELINE_TICKET_RANK_STATS: dict[str, Any] = {
-    "source": "baseline",
-    "label": "検証ベースライン（5点カバー）",
-    "period": {"start": "2026-07-30", "end": "2026-08-05"},
-    "n_races": 1020,
-    "note": "候補のうち当該順位の点が的中した割合。全体の「いずれか的中」とは別指標。",
-    "sanrenpuku": {
-        "any_rate": 0.626,
-        "ranks": [
-            {"rank": 1, "hit_rate": 0.228, "label": "本命"},
-            {"rank": 2, "hit_rate": 0.153, "label": "2番手"},
-            {"rank": 3, "hit_rate": 0.124, "label": "3番手"},
-            {"rank": 4, "hit_rate": 0.070, "label": "4番手"},
-            {"rank": 5, "hit_rate": 0.052, "label": "5番手"},
-        ],
-    },
-    "sanrentan": {
-        "any_rate": 0.217,
-        "ranks": [
-            {"rank": 1, "hit_rate": 0.065, "label": "本命"},
-            {"rank": 2, "hit_rate": 0.045, "label": "2番手"},
-            {"rank": 3, "hit_rate": 0.048, "label": "3番手"},
-            {"rank": 4, "hit_rate": 0.027, "label": "4番手"},
-            {"rank": 5, "hit_rate": 0.031, "label": "5番手"},
-        ],
-    },
-    "pre_exhibition": {
-        "n_races": 867,
-        "note": "同じ期間で展示を消した展示前モード",
-        "sanrenpuku": {
-            "any_rate": 0.627,
-            "ranks": [
-                {"rank": 1, "hit_rate": 0.232},
-                {"rank": 2, "hit_rate": 0.158},
-                {"rank": 3, "hit_rate": 0.127},
-                {"rank": 4, "hit_rate": 0.053},
-                {"rank": 5, "hit_rate": 0.058},
-            ],
-        },
-        "sanrentan": {
-            "any_rate": 0.218,
-            "ranks": [
-                {"rank": 1, "hit_rate": 0.077},
-                {"rank": 2, "hit_rate": 0.053},
-                {"rank": 3, "hit_rate": 0.045},
-                {"rank": 4, "hit_rate": 0.023},
-                {"rank": 5, "hit_rate": 0.020},
-            ],
-        },
-    },
-}
+
+def get_baseline_stats() -> dict[str, Any]:
+    """GitHub 同梱の offline eval レポートからベースラインを取得."""
+    return get_baseline_ticket_rank_stats()
 
 
 def _empty_counters() -> dict[str, Any]:
@@ -179,9 +133,11 @@ def compute_live_ticket_rank_stats(
 
 def get_ticket_rank_stats(session: Session | None = None, *, days: int = 14) -> dict[str, Any]:
     """UI用: ベースライン + 可能ならライブ集計."""
+    baseline = get_baseline_stats()
     out: dict[str, Any] = {
-        "baseline": BASELINE_TICKET_RANK_STATS,
-        "display": BASELINE_TICKET_RANK_STATS,
+        "baseline": baseline,
+        "display": baseline,
+        "offline_reference": baseline,
     }
     if session is None:
         return out
@@ -208,7 +164,8 @@ def get_ticket_rank_stats(session: Session | None = None, *, days: int = 14) -> 
 
 def rank_hit_rate_map(stats: dict[str, Any] | None = None) -> dict[str, dict[int, float]]:
     """kind -> rank -> hit_rate."""
-    src = (stats or BASELINE_TICKET_RANK_STATS).get("display") or stats or BASELINE_TICKET_RANK_STATS
+    baseline = get_baseline_stats()
+    src = (stats or baseline).get("display") or stats or baseline
     if "sanrenpuku" not in src and "baseline" in (stats or {}):
         src = (stats or {})["display"]
     out: dict[str, dict[int, float]] = {"sanrenpuku": {}, "sanrentan": {}}

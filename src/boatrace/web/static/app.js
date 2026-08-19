@@ -1142,10 +1142,16 @@ async function bootVenues() {
 
 async function bootAccuracy() {
   const summary = await jget("/api/accuracy/summary?days=30");
+  const ref = summary.offline_reference || {};
+  const isOffline = summary.source === "offline_eval_report" || Number(summary.n_races || 0) <= 0;
+  const labelNote = isOffline
+    ? `<p class="meta">DB集計なし → GitHub同梱のオフライン検証を表示（${ref.as_of || "?"} / n=${ref.n_races || summary.reference_n_races || "?"}）</p>`
+    : "";
   document.getElementById("acc-summary").innerHTML = `
-    <div class="stat"><div class="label">対象レース</div><div class="value">${summary.n_races}</div></div>
-    <div class="stat"><div class="label">3連複(〜3候補)</div><div class="value">${pct(summary.trio_rate)}</div></div>
-    <div class="stat"><div class="label">3連単(〜3候補)</div><div class="value">${pct(summary.trifecta_rate || 0)}</div></div>
+    ${labelNote}
+    <div class="stat"><div class="label">対象レース</div><div class="value">${isOffline ? (ref.n_races || summary.reference_n_races || "—") : summary.n_races}</div></div>
+    <div class="stat"><div class="label">3連複(〜5点)</div><div class="value">${pct(summary.trio_rate)}</div></div>
+    <div class="stat"><div class="label">3連単(〜5点)</div><div class="value">${pct(summary.trifecta_rate || 0)}</div></div>
     <div class="stat"><div class="label">単勝(参考)</div><div class="value">${pct(summary.win_rate)}</div></div>
   `;
   const rankStats = await loadTicketRankStats();

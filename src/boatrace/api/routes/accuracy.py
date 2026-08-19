@@ -17,8 +17,38 @@ router = APIRouter()
 
 @router.get("/accuracy/summary")
 def accuracy_summary(days: int = Query(30, ge=1, le=365), db: Session = Depends(get_db)) -> dict:
+    from boatrace.prediction.offline_eval import get_offline_accuracy_summary
+
     svc = LearningService(db)
-    return svc.accuracy_summary(days=days)
+    out = svc.accuracy_summary(days=days)
+    reference = get_offline_accuracy_summary()
+    out["offline_reference"] = reference
+    if int(out.get("n_races") or 0) <= 0:
+        out["source"] = "offline_eval_report"
+        out["display_note"] = reference.get("note")
+        out["trio_rate"] = reference.get("trio_rate", out.get("trio_rate"))
+        out["trifecta_rate"] = reference.get("trifecta_rate", out.get("trifecta_rate"))
+        out["win_rate"] = reference.get("win_rate", out.get("win_rate"))
+        out["reference_n_races"] = reference.get("n_races")
+    return out
+
+
+@router.get("/accuracy/offline-reference")
+def accuracy_offline_reference() -> dict:
+    """GitHub 同梱のオフライン解析レポート（参考精度）."""
+    from boatrace.prediction.offline_eval import (
+        get_baseline_ticket_rank_stats,
+        get_holdout_reference,
+        get_offline_accuracy_summary,
+        report_status,
+    )
+
+    return {
+        "status": report_status(),
+        "summary": get_offline_accuracy_summary(),
+        "holdout": get_holdout_reference(),
+        "ticket_ranks": get_baseline_ticket_rank_stats(),
+    }
 
 
 @router.get("/accuracy/daily")
@@ -72,10 +102,10 @@ def accuracy_ticket_ranks(
         "pre_close_ticket_ranks": pre if pre_n >= 80 else None,
         "use_baseline_for_display": bool(risk.get("live_stats_unreliable")) or pre_n < 80,
     }
-    if out["integrity"]["use_baseline_for_display"]:
+    if (out["integrity"]["use_baseline_for_display"]:
         out["display"] = out.get("baseline") or out.get("display")
         out["display_note"] = (
-            "締切前の保存予想が不足しているため、検証ベースラインを表示しています。"
+            "締切前の保存予想が不足しているため、GitHub同梱のオフライン検証ベースラインを表示しています。"
             "ライブ集計は結果後の再予想を含む可能性があります。"
         )
     else:

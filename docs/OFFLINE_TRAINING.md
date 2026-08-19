@@ -49,7 +49,7 @@ chmod +x scripts/offline_retrain_all.sh
 - `confidence_max_per_day`: 3（1日最大3R）
 - `confidence_target_coverage`: 0.02（学習時の選別率目標）
 
-学習後は `data/models/*.joblib` を Git にコミットし、Render にデプロイしてください。
+学習後は `data/models/*.joblib` と `data/models/trifecta_eval_report.json` を Git にコミットし、Render にデプロイしてください。API 起動時に JSON を自動読み込みし、DB が空でも `/api/accuracy/*` に参考精度を表示します。
 
 ## 参考精度（オフライン検証）
 

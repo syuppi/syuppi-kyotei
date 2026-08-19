@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session, joinedload
 from boatrace.db.models import PredictHistory, RaceCard, RaceResult
 from boatrace.prediction.review import compute_hit_flags
 from boatrace.prediction.timing import classify_prediction_timing
-from boatrace.prediction.ticket_rank_stats import BASELINE_TICKET_RANK_STATS
+from boatrace.prediction.offline_eval import get_holdout_reference
+from boatrace.prediction.ticket_rank_stats import get_baseline_stats
 
 
 def _empty_counters() -> dict[str, Any]:
@@ -204,6 +205,7 @@ def audit_predictions(
 
     verifiable_ids = {c.id for c in verifiable_cards}
     verifiable_only = [c for c in cards if c.id in verifiable_ids and c.result and c.result.rank1_waku]
+    baseline = get_baseline_stats()
 
     return {
         "window": {"start": since.isoformat(), "end": until.isoformat(), "days": days if day is None else 1},
@@ -237,24 +239,16 @@ def audit_predictions(
             ),
         },
         "baseline_reference": {
-            "label": BASELINE_TICKET_RANK_STATS.get("label"),
-            "period": BASELINE_TICKET_RANK_STATS.get("period"),
-            "n_races": BASELINE_TICKET_RANK_STATS.get("n_races"),
-            "sanrenpuku_any_rate": (BASELINE_TICKET_RANK_STATS.get("sanrenpuku") or {}).get("any_rate"),
-            "sanrentan_any_rate": (BASELINE_TICKET_RANK_STATS.get("sanrentan") or {}).get("any_rate"),
+            "label": baseline.get("label"),
+            "period": baseline.get("period"),
+            "n_races": baseline.get("n_races"),
+            "sanrenpuku_any_rate": (baseline.get("sanrenpuku") or {}).get("any_rate"),
+            "sanrentan_any_rate": (baseline.get("sanrentan") or {}).get("any_rate"),
+            "source": baseline.get("report_path") or baseline.get("source"),
             "note": (
-                "オフライン検証（2026-07-30〜08-05）。"
+                "GitHub 同梱の trifecta_eval_report.json から読み込み。"
                 "確定レースを再予想したバックテストで、結果は買い目生成に使っていません。"
             ),
         },
-        "holdout_reference": {
-            "source": "data/models/trifecta_eval_report.json",
-            "holdout_7d": {
-                "n": 1054,
-                "win_top3": 0.875,
-                "trio_top3": 0.524,
-                "trifecta_top3": 0.202,
-            },
-            "note": "学習ホールドアウト7日。ライブ追跡とは別の検証値です。",
-        },
+        "holdout_reference": get_holdout_reference(),
     }

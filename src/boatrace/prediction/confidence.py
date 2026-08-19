@@ -417,10 +417,11 @@ def _historical_trend_reasons(
 
     # 候補順位の過去的中率（固定ベースライン）
     try:
-        from boatrace.prediction.ticket_rank_stats import BASELINE_TICKET_RANK_STATS
+        from boatrace.prediction.ticket_rank_stats import get_baseline_stats
 
-        trio_any = float((BASELINE_TICKET_RANK_STATS.get("sanrenpuku") or {}).get("any_rate") or 0)
-        tf_any = float((BASELINE_TICKET_RANK_STATS.get("sanrentan") or {}).get("any_rate") or 0)
+        baseline = get_baseline_stats()
+        trio_any = float((baseline.get("sanrenpuku") or {}).get("any_rate") or 0)
+        tf_any = float((baseline.get("sanrentan") or {}).get("any_rate") or 0)
         if trio_any > 0:
             out.append(
                 f"5点カバー全体の過去的中率: 3連複いずれか{_pct(trio_any, 1)} / 3連単いずれか{_pct(tf_any, 1)}"

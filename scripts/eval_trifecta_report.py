@@ -121,6 +121,12 @@ def main() -> None:
 
         report["today"] = _eval_cards(session, today_cards)
         report["holdout_7d"] = _eval_cards(session, holdout_cards)
+        from boatrace.prediction.offline_eval import fallback_ticket_rank_template
+
+        report["ticket_ranks"] = fallback_ticket_rank_template()
+        report["ticket_ranks"]["note"] = (
+            "候補順位別は固定検証期間。any_rate は holdout_7d の trio_top3 / trifecta_top3 で上書きされます。"
+        )
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
         out = ROOT / "data" / "models" / "trifecta_eval_report.json"
