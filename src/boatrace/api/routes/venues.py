@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from boatrace.db.models import PredictHistory, RaceCard, Venue, VenueBias, VenueCourseStats
 from boatrace.db.session import get_db
+from boatrace.timeutil import japan_today
 
 router = APIRouter()
 
@@ -46,6 +47,7 @@ def _confident_counts_by_venue(db: Session, target: date) -> dict[str, int]:
 def list_venues(
     day: Optional[str] = Query(None, description="YYYY-MM-DD。指定時はその日開催場のみ"),
     confident_only: bool = Query(False, description="自信ありレースがある場だけ"),
+    autofetch: bool = Query(True, description="カード0件なら出走表を自動取得"),
     db: Session = Depends(get_db),
 ) -> dict:
     """場一覧。day 指定時は RaceCard がある開催場だけ返す。"""
@@ -57,12 +59,26 @@ def list_venues(
             .group_by(RaceCard.venue_id)
             .all()
         )
+        fetched = None
+        if autofetch and not counts and not confident_only:
+            from boatrace.jobs.today_bootstrap import ensure_day_cards
+
+            fetched = ensure_day_cards(target, force=False)
+            db.expire_all()
+            counts = dict(
+                db.query(RaceCard.venue_id, func.count(RaceCard.id))
+                .filter(RaceCard.race_date == target)
+                .group_by(RaceCard.venue_id)
+                .all()
+            )
         if not counts:
             return {
                 "day": target.isoformat(),
                 "items": [],
                 "active_only": True,
                 "confident_total": 0,
+                "autofetched": fetched,
+                "japan_today": japan_today().isoformat(),
             }
         conf_counts = _confident_counts_by_venue(db, target)
         venue_ids = list(counts.keys())
@@ -94,11 +110,14 @@ def list_venues(
             "confident_only": confident_only,
             "confident_total": int(sum(conf_counts.values())),
             "items": items,
+            "autofetched": fetched,
+            "japan_today": japan_today().isoformat(),
         }
 
     rows = db.query(Venue).order_by(Venue.id).all()
     return {
         "active_only": False,
+        "japan_today": japan_today().isoformat(),
         "items": [
             {
                 "id": v.id,

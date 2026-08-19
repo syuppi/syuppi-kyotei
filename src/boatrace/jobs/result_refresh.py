@@ -13,6 +13,7 @@ from boatrace.collectors.official import OfficialCollector
 from boatrace.db.models import RaceCard, RaceResult
 from boatrace.db.session import session_scope
 from boatrace.logging_setup import get_logger
+from boatrace.timeutil import japan_today
 
 logger = get_logger(__name__)
 
@@ -23,7 +24,7 @@ _last_run: dict[str, Any] = {"at": None, "days": []}
 
 def missing_result_stats(days: int = 2) -> dict[str, Any]:
     """直近N日の着順欠損状況."""
-    today = date.today()
+    today = japan_today()
     out: list[dict[str, Any]] = []
     with session_scope() as s:
         for i in range(days):
@@ -49,7 +50,7 @@ def missing_result_stats(days: int = 2) -> dict[str, Any]:
 def refresh_recent_missing(days: int = 2) -> dict[str, Any]:
     """本日〜直近の未取得着順だけ公式HTMLで埋める."""
     collector = OfficialCollector()
-    today = date.today()
+    today = japan_today()
     day_results = []
     for i in range(days):
         d = today - timedelta(days=i)

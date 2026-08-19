@@ -12,6 +12,7 @@ from boatrace.config import get_venue_map
 from boatrace.db.models import RaceCard, RaceEntry, RaceResult, Racer, WeatherSnapshot
 from boatrace.db.session import session_scope
 from boatrace.logging_setup import get_logger
+from boatrace.timeutil import japan_today
 
 logger = get_logger(__name__)
 
@@ -46,33 +47,38 @@ class OpenApiCollector(BaseCollector):
         race_date: date | None = None,
         venue_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        target = race_date or date.today()
+        target = race_date or japan_today()
         payload = self.fetch_day_json(target)
         return self.ingest(payload, venue_ids=venue_ids)
 
     def fetch_day_json(self, race_date: date) -> dict[str, Any]:
-        if race_date == date.today():
-            url = f"{OPENAPI_BASE}/today.json"
-        else:
-            url = f"{OPENAPI_BASE}/{race_date.year}/{race_date.strftime('%Y%m%d')}.json"
-        try:
-            text = self.fetch_text(url)
-        except CollectorError:
-            # today 失敗時は日付URLへフォールバック
-            if race_date == date.today():
-                url = f"{OPENAPI_BASE}/{race_date.year}/{race_date.strftime('%Y%m%d')}.json"
-                text = self.fetch_text(url)
-            else:
-                raise
+        """日付URLを優先（today.json は CDN/空ペイロードで失敗しやすい）."""
+        dated = f"{OPENAPI_BASE}/{race_date.year}/{race_date.strftime('%Y%m%d')}.json"
+        today_url = f"{OPENAPI_BASE}/today.json"
+        urls: list[str] = [dated]
+        if race_date == japan_today():
+            urls.append(today_url)
+
         import json
 
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise CollectorError(f"invalid json from {url}: {e}") from e
-        if not isinstance(data, dict) or "programs" not in data:
-            raise CollectorError(f"unexpected payload from {url}")
-        return data
+        last_err: Exception | None = None
+        for url in urls:
+            try:
+                text = self.fetch_text(url)
+                data = json.loads(text)
+            except (CollectorError, json.JSONDecodeError) as e:
+                last_err = e
+                logger.warning("openapi_fetch_try_failed", url=url, error=str(e))
+                continue
+            if not isinstance(data, dict) or "programs" not in data:
+                last_err = CollectorError(f"unexpected payload from {url}")
+                continue
+            stadiums = ((data.get("programs") or {}).get("stadiums") or {})
+            if not stadiums and url != urls[-1]:
+                logger.warning("openapi_empty_stadiums_retry", url=url, date=race_date.isoformat())
+                continue
+            return data
+        raise CollectorError(f"Failed to fetch OpenAPI for {race_date.isoformat()}: {last_err}")
 
     def ingest(
         self, payload: dict[str, Any], venue_ids: list[str] | None = None

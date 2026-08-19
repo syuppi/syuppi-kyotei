@@ -19,10 +19,11 @@ from boatrace.jobs.result_refresh import (
     start_background_refresh,
     stop_background_refresh,
 )
-from boatrace.logging_setup import setup_logging
+from boatrace.logging_setup import get_logger, setup_logging
 
 setup_logging()
 settings = get_settings()
+logger = get_logger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
@@ -30,9 +31,22 @@ templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # 10分ごとに当日・前日の着順欠損を自動補完（手動修正待ちを減らす）
+    try:
+        from boatrace.jobs.today_bootstrap import ensure_today_cards
+
+        boot = ensure_today_cards()
+        logger.info(
+            "today_cards_bootstrap",
+            date=boot.get("date"),
+            skipped=boot.get("skipped"),
+            race_count=boot.get("race_count"),
+            venue_count=boot.get("venue_count"),
+            ok=boot.get("ok"),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("today_cards_bootstrap_failed", error=str(e))
+
     start_background_refresh(interval_sec=600)
-    # Render等: 空DBでも特徴が使えるよう直近履歴を裏取得
     start_history_warm()
     try:
         yield
@@ -73,10 +87,21 @@ def search_page(request: Request) -> HTMLResponse:
 
 @app.get("/health")
 def health() -> dict:
+    from boatrace.jobs.today_bootstrap import count_cards_for_day
+    from boatrace.timeutil import japan_today
+
     stats = missing_result_stats(days=2)
+    today = japan_today()
+    race_count, venue_count, venues = count_cards_for_day(today)
     return {
         "status": "ok",
         "predict_only": bool(settings.runtime.predict_only),
+        "japan_today": today.isoformat(),
+        "today_races": {
+            "race_count": race_count,
+            "venue_count": venue_count,
+            "venues": venues,
+        },
         "missing_results": stats,
         "last_result_refresh": last_refresh() or None,
         "history_warm": warm_status(),

@@ -338,18 +338,47 @@ async function bootPredictions() {
     return isAllConfidentMode() ? "" : venue.value;
   }
 
-  async function refreshVenueOptions() {
+  async function refreshVenueOptions(opts = {}) {
+    const { autoFetch = true } = opts;
     setStatus("開催場を確認中…");
-    const data = await fillActiveVenues(venue, day.value, {
+    let data = await fillActiveVenues(venue, day.value, {
       confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
     });
-    const hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
+    let hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
+
+    if (!hasList && autoFetch && !(venueConfOnly && venueConfOnly.checked)) {
+      setStatus("出走表を取得中…（スリープ復帰後は1〜2分かかることがあります）");
+      try {
+        const prep = new URLSearchParams({ day: day.value });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 120000);
+        const res = await fetch(`/api/day/fetch-cards?${prep}`, {
+          method: "POST",
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const fetched = await res.json();
+        setStatus(
+          (fetched.venue_count || 0) > 0
+            ? `出走表: ${fetched.venue_count}場 / ${fetched.race_count}R`
+            : `出走表0件（${fetched.date || day.value}）`
+        );
+        data = await fillActiveVenues(venue, day.value, {
+          confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+        });
+        hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
+      } catch (e) {
+        setStatus(`出走表の取得に失敗: ${e.message || e}`);
+      }
+    }
+
     setAnalyzeEnabled(Boolean(venue.value));
     if (!hasList) {
       clearRaceView(
         venueConfOnly && venueConfOnly.checked
           ? "この日の自信ありレースがありません。先に解析するか、チェックを外してください。"
-          : "この日の開催場がありません。日付を変えるか、先に出走表を取得してください。"
+          : "開催場がありません。ページを再読み込みするか、1〜2分待ってからもう一度お試しください。"
       );
       setStatus(venueConfOnly && venueConfOnly.checked ? "自信ありの場なし" : "開催場なし");
       return false;

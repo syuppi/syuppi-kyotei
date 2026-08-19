@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import threading
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 from boatrace.config import get_settings
 from boatrace.logging_setup import get_logger
+from boatrace.timeutil import japan_today
 
 logger = get_logger(__name__)
 
@@ -21,9 +22,10 @@ def warm_status() -> dict[str, Any]:
 
 
 def warm_lookback(days: int | None = None) -> dict[str, Any]:
-    """OpenAPIで直近N日を取得（オッズ・潮汐は省略して高速化）."""
+    """OpenAPIで「本日＋直近N日」を取得（オッズ・潮汐は省略して高速化）."""
     from boatrace.collectors.official import OfficialCollector
     from boatrace.collectors.openapi import OpenApiCollector
+    from boatrace.jobs.today_bootstrap import ensure_today_cards
 
     n = int(days if days is not None else get_settings().runtime.warm_lookback_days)
     n = max(0, min(n, 30))
@@ -32,10 +34,21 @@ def warm_lookback(days: int | None = None) -> dict[str, Any]:
         _status["state"] = "skipped"
         return warm_status()
 
-    today = date.today()
+    done: list[str] = []
+    try:
+        boot = ensure_today_cards(force=False)
+        if boot.get("date"):
+            done.append(str(boot["date"]))
+            _status["today_bootstrap"] = boot
+    except Exception as e:  # noqa: BLE001
+        logger.warning("warm_today_bootstrap_failed", error=str(e))
+        _status["error"] = str(e)
+
+    today = japan_today()
     openapi = OpenApiCollector()
     official = OfficialCollector()
-    done: list[str] = []
+    _status["days_done"] = list(done)
+
     for i in range(1, n + 1):
         if _stop.is_set():
             break
@@ -46,7 +59,8 @@ def warm_lookback(days: int | None = None) -> dict[str, Any]:
                 official.collect_missing_results(d, venue_ids=None)
             except Exception:  # noqa: BLE001
                 pass
-            done.append(d.isoformat())
+            if d.isoformat() not in done:
+                done.append(d.isoformat())
             _status["days_done"] = list(done)
             logger.info("history_warm_day_done", date=d.isoformat(), i=i, n=n)
         except Exception as e:  # noqa: BLE001

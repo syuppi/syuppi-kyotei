@@ -18,6 +18,7 @@ from boatrace.models.ml_model import MLPredictor
 from boatrace.models.scoring import ScoringPredictor
 from boatrace.prediction.narrative import build_race_narrative
 from boatrace.prediction.scenarios import build_exhibition_scenarios
+from boatrace.timeutil import japan_today
 
 logger = get_logger(__name__)
 
@@ -179,7 +180,7 @@ class PredictionService:
         venue_id: str | None = None,
         persist: bool = True,
     ) -> list[dict[str, Any]]:
-        target = race_date or date.today()
+        target = race_date or japan_today()
         q = (
             self.session.query(RaceCard)
             .options(joinedload(RaceCard.entries), joinedload(RaceCard.venue))

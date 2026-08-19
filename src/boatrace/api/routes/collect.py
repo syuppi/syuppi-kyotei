@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from boatrace.collectors.pipeline import prepare_day
@@ -13,6 +14,7 @@ from boatrace.db.models import PredictHistory, RaceCard
 from boatrace.db.session import get_db
 from boatrace.prediction.api_items import prediction_item_from_db
 from boatrace.prediction.service import PredictionService
+from boatrace.timeutil import japan_today
 
 router = APIRouter()
 
@@ -40,6 +42,36 @@ def _items_from_db(db: Session, target: date, venue_id: str | None) -> list[dict
     return items
 
 
+@router.post("/day/fetch-cards")
+def fetch_day_cards(
+    day: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    venue_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """出走表だけ取得（予想なし）。開催場一覧を埋める用。"""
+    from boatrace.jobs.today_bootstrap import ensure_day_cards
+
+    target = japan_today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
+    venues = [venue_id] if venue_id else None
+    boot = ensure_day_cards(target, force=True, venue_ids=venues)
+    db.expire_all()
+
+    counts = dict(
+        db.query(RaceCard.venue_id, func.count(RaceCard.id))
+        .filter(RaceCard.race_date == target)
+        .group_by(RaceCard.venue_id)
+        .all()
+    )
+    return {
+        "date": target.isoformat(),
+        "japan_today": japan_today().isoformat(),
+        "venue_count": len(counts),
+        "race_count": int(sum(counts.values())),
+        "venues": sorted(counts.keys()),
+        "collected": boot.get("collected") or boot,
+    }
+
+
 @router.post("/day/prepare")
 def prepare_and_predict(
     day: Optional[str] = Query(None, description="YYYY-MM-DD"),
@@ -52,7 +84,7 @@ def prepare_and_predict(
     指定日の出走表・オッズを取得してから予想する。
     Cloudflare 524 回避のため既定は fast=True。
     """
-    target = date.today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
+    target = japan_today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
     venues = [venue_id] if venue_id else None
 
     existing = _items_from_db(db, target, venue_id)

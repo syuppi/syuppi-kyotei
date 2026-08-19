@@ -12,6 +12,7 @@ from boatrace.collectors.tide import TideCollector
 from boatrace.collectors.turnmark import TurnmarkOddsCollector
 from boatrace.config import get_settings
 from boatrace.logging_setup import get_logger
+from boatrace.timeutil import japan_today
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,7 @@ def collect_daily(
     オッズは turnmark（過去）＋公式単勝（当日）で補完。
     """
     settings = get_settings()
-    target = race_date or date.today()
+    target = race_date or japan_today()
     openapi = OpenApiCollector()
     official = OfficialCollector()
     tide = TideCollector()
@@ -73,7 +74,7 @@ def collect_daily(
                 day["turnmark_odds_error"] = str(e)
 
             # 当日（または turnmark が薄いとき）: 公式単勝
-            if d == date.today() or not (day.get("turnmark_odds") or {}).get("cards_updated"):
+            if d == japan_today() or not (day.get("turnmark_odds") or {}).get("cards_updated"):
                 try:
                     day["official_odds"] = official_odds.collect(d, venue_ids=venue_ids)
                 except Exception as e:  # noqa: BLE001
@@ -110,7 +111,7 @@ def prepare_day(
     UIの日付変更用: その日だけ収集（lookbackなし）。
     fast=True では潮汐・公式オッズを省略し、OpenAPI + turnmark のみ（524回避）。
     """
-    target = race_date or date.today()
+    target = race_date or japan_today()
     openapi = OpenApiCollector()
     turnmark = TurnmarkOddsCollector()
     summary: dict[str, Any] = {"date": target.isoformat(), "fast": fast, "steps": {}}

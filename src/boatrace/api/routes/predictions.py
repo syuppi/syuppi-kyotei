@@ -13,6 +13,7 @@ from boatrace.db.session import get_db
 from boatrace.prediction.api_items import prediction_item_from_db
 from boatrace.prediction.review import review_from_db_row
 from boatrace.prediction.service import PredictionService
+from boatrace.timeutil import japan_today
 
 router = APIRouter()
 
@@ -25,7 +26,14 @@ def predictions_today(
     confident_only: bool = Query(False, description="自信ありレースのみ"),
     db: Session = Depends(get_db),
 ) -> dict:
-    target = date.today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
+    target = japan_today() if not day else datetime.strptime(day, "%Y-%m-%d").date()
+    if not day or target == japan_today():
+        exists = db.query(RaceCard.id).filter(RaceCard.race_date == target).limit(1).first()
+        if exists is None:
+            from boatrace.jobs.today_bootstrap import ensure_day_cards
+
+            ensure_day_cards(target)
+            db.expire_all()
     if refresh:
         svc = PredictionService(db)
         svc.predict_day(target, venue_id=venue_id, persist=True)
