@@ -102,7 +102,7 @@ def accuracy_ticket_ranks(
         "pre_close_ticket_ranks": pre if pre_n >= 80 else None,
         "use_baseline_for_display": bool(risk.get("live_stats_unreliable")) or pre_n < 80,
     }
-    if (out["integrity"]["use_baseline_for_display"]:
+    if out["integrity"]["use_baseline_for_display"]:
         out["display"] = out.get("baseline") or out.get("display")
         out["display_note"] = (
             "締切前の保存予想が不足しているため、GitHub同梱のオフライン検証ベースラインを表示しています。"
