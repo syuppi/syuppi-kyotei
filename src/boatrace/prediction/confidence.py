@@ -360,9 +360,89 @@ def rule_based_score(feat: dict[str, float]) -> float:
     return float(max(0.02, min(0.95, score)))
 
 
-def explain_confidence(feat: dict[str, float], score: float) -> list[str]:
-    """UI用の短い根拠（6観点を意識）."""
+def _pct(v: float, digits: int = 0) -> str:
+    return f"{v * 100:.{digits}f}%"
+
+
+def _historical_trend_reasons(
+    feat: dict[str, float],
+    score: float,
+    *,
+    threshold: float,
+    metrics: dict[str, Any] | None = None,
+) -> list[str]:
+    """過去検証・場傾向に基づく根拠（数値付き）."""
+    out: list[str] = []
+    metrics = metrics or {}
+
+    # 検証データ上の同スコア帯
+    valid = metrics.get("valid") or {}
+    sel = valid.get("selected") or metrics.get("train_select") or {}
+    base_trio = float(valid.get("base_trio_rate") or metrics.get("base_rate") or 0.0)
+    sel_trio = float(sel.get("trio_rate") or 0.0)
+    sel_tf = float(sel.get("tf_rate") or 0.0)
+    sel_n = int(sel.get("n") or valid.get("n") or 0)
+    if score >= threshold and sel_trio > 0 and sel_n >= 30:
+        out.append(
+            f"過去検証: 自信あり相当（n={sel_n}）の3連複5点カバー的中率{_pct(sel_trio, 1)}"
+            + (f"・3連単{_pct(sel_tf, 1)}" if sel_tf > 0 else "")
+            + (f"（全体{_pct(base_trio, 1)}）" if base_trio > 0 else "")
+        )
+    elif base_trio > 0:
+        out.append(f"過去検証: 一般レースの3連複5点カバー的中率は約{_pct(base_trio, 1)}")
+
+    # 場の過去傾向（特徴量に含まれる集計値）
+    in_wr = float(feat.get("venue_in_win_rate") or 0)
+    if in_wr >= 0.48:
+        nige = float(feat.get("venue_nige_rate") or 0)
+        makuri = float(feat.get("venue_makuri_rate") or 0)
+        sashi = float(feat.get("venue_sashi_rate") or 0)
+        parts = [f"1コース1着率{_pct(in_wr, 0)}"]
+        if nige > 0:
+            parts.append(f"逃げ{_pct(nige, 0)}")
+        if makuri > 0:
+            parts.append(f"まくり{_pct(makuri, 0)}")
+        if sashi > 0:
+            parts.append(f"差し{_pct(sashi, 0)}")
+        out.append(f"この場の過去傾向: {' / '.join(parts)}")
+
+    same_in = float(feat.get("same_day_in_win_rate") or 0)
+    prev_n = int(feat.get("same_day_prev_count") or 0)
+    if prev_n >= 2 and same_in > 0:
+        out.append(
+            f"当日この場の先行レース（{prev_n}R）では1コース1着率{_pct(same_in, 0)}"
+        )
+
+    # 候補順位の過去的中率（固定ベースライン）
+    try:
+        from boatrace.prediction.ticket_rank_stats import BASELINE_TICKET_RANK_STATS
+
+        trio_any = float((BASELINE_TICKET_RANK_STATS.get("sanrenpuku") or {}).get("any_rate") or 0)
+        tf_any = float((BASELINE_TICKET_RANK_STATS.get("sanrentan") or {}).get("any_rate") or 0)
+        if trio_any > 0:
+            out.append(
+                f"5点カバー全体の過去的中率: 3連複いずれか{_pct(trio_any, 1)} / 3連単いずれか{_pct(tf_any, 1)}"
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    if score >= threshold and sel_trio <= 0 and in_wr >= 0.52 and feat.get("in_fav_alignment", 0) >= 0.35:
+        out.append("イン優勢場×本命1号の組み合わせは、過去データで当たりやすい型")
+
+    return out[:3]
+
+
+def explain_confidence(
+    feat: dict[str, float],
+    score: float,
+    *,
+    threshold: float = 0.55,
+    metrics: dict[str, Any] | None = None,
+) -> list[str]:
+    """UI用の短い根拠（6観点 + 過去傾向）."""
     reasons: list[str] = []
+    trend = _historical_trend_reasons(feat, score, threshold=threshold, metrics=metrics)
+    reasons.extend(trend)
     if feat.get("in_fav_alignment", 0) >= 0.35 or (
         feat.get("fav_is_course1", 0) >= 0.5 and feat.get("venue_in_win_rate", 0) >= 0.52
     ):
@@ -397,16 +477,16 @@ def explain_confidence(feat: dict[str, float], score: float) -> list[str]:
         reasons.append(f"1号艇飛びリスク高め（{feat['course1_fly_risk']:.0%}）")
     if feat.get("win_margin", 0) >= 0.12:
         reasons.append(f"本命の勝率差がはっきり（差{feat['win_margin']:.0%}）")
-    if score >= 0.62:
-        reasons.insert(0, "過去同型では3連系が当たりやすい部類")
-    elif score < 0.42:
-        reasons.insert(0, "過去同型では外れが多く、見送り候補")
-    # 重複除去しつつ最大5
+    if score >= threshold and not any("過去検証" in r for r in reasons):
+        reasons.append("モデル上、この条件は3連系が当たりやすい部類")
+    elif score < threshold * 0.85:
+        reasons.append("過去同型では外れが多く、見送り候補")
+    # 重複除去しつつ最大6（過去傾向を優先して残す）
     out: list[str] = []
     for r in reasons:
         if r not in out:
             out.append(r)
-        if len(out) >= 5:
+        if len(out) >= 6:
             break
     return out
 
@@ -602,7 +682,12 @@ class RaceConfidenceModel:
             is_confident=is_conf,
             label=label,
             tier=tier,
-            reasons=explain_confidence(feat, score),
+            reasons=explain_confidence(
+                feat,
+                score,
+                threshold=thr,
+                metrics=self.metrics,
+            ),
             features=feat,
             source=source,
         )

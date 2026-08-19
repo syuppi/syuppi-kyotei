@@ -218,7 +218,7 @@ body.is-fetching .controls .btn:not(#page-reload):not(#fetch-done-reload):not(#f
   align-items: center;
   gap: 0.55rem;
 }
-.fetch-done-banner span { flex: 1 1 12rem; }
+.meta.timing-warn { color: #f0b429; }
 .load-status { min-height: 1.25rem; }
 
 @keyframes spin { to { transform: rotate(360deg); } }

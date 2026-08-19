@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from boatrace.db.models import PredictHistory, RaceCard, RaceResult
+from boatrace.prediction.timing import is_hit_verifiable
 
 # 2026-07-30〜08-05 / 現行5点カバー再予想（展示あり）
 BASELINE_TICKET_RANK_STATS: dict[str, Any] = {
@@ -102,6 +102,8 @@ def compute_live_ticket_rank_stats(
             .first()
         )
         if not pred:
+            continue
+        if not is_hit_verifiable(card, pred):
             continue
         tickets = (pred.feature_snapshot or {}).get("tickets") or {}
         sps = [t for t in (tickets.get("sanrenpuku") or []) if t.get("combo")][:5]

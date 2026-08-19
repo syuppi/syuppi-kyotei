@@ -6,11 +6,14 @@ from typing import Any
 
 from boatrace.db.models import PredictHistory, RaceCard
 from boatrace.prediction.review import review_from_db_row
+from boatrace.prediction.timing import classify_prediction_timing
 
 
 def prediction_item_from_db(card: RaceCard, pred: PredictHistory) -> dict[str, Any]:
     snap = pred.feature_snapshot or {}
     tickets = snap.get("tickets") or {}
+    timing = classify_prediction_timing(card, pred)
+    hit_verifiable = bool(timing.get("hit_verifiable"))
     result_block = {
         "rank1": card.result.rank1_waku if card.result else None,
         "rank2": card.result.rank2_waku if card.result else None,
@@ -18,14 +21,16 @@ def prediction_item_from_db(card: RaceCard, pred: PredictHistory) -> dict[str, A
         "kimarite": card.result.kimarite if card.result else None,
         "entry_results": card.result.entry_results if card.result else None,
     }
-    review = review_from_db_row(
-        pred_tickets=tickets,
-        feature_snapshot=snap,
-        rankings=pred.rankings,
-        win_probs=pred.win_probs,
-        upset_candidates=pred.upset_candidates,
-        race_result=card.result,
-    )
+    review = None
+    if hit_verifiable:
+        review = review_from_db_row(
+            pred_tickets=tickets,
+            feature_snapshot=snap,
+            rankings=pred.rankings,
+            win_probs=pred.win_probs,
+            upset_candidates=pred.upset_candidates,
+            race_result=card.result,
+        )
     return {
         "race_card_id": card.id,
         "venue_id": card.venue_id,
@@ -72,4 +77,8 @@ def prediction_item_from_db(card: RaceCard, pred: PredictHistory) -> dict[str, A
         or ([sorted(pred.candidates_trio[:3])] if pred.candidates_trio else []),
         "result": result_block,
         "review": review,
+        "prediction_timing": timing,
+        "hit_verifiable": hit_verifiable,
+        "predicted_at": timing.get("predicted_at"),
+        "deadline_at": timing.get("deadline_at"),
     }

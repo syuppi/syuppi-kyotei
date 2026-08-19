@@ -351,25 +351,42 @@ function normalizeTickets(item) {
 function hitFlags(item, wins, sps, sts) {
   const r = item.result || {};
   const hasResult = r.rank1 != null;
+  const verifiable = item.hit_verifiable !== false;
   const trueTop3 = [r.rank1, r.rank2, r.rank3].filter((x) => x != null);
-  const hitWin = hasResult && wins.some((t) => Number(t.combo?.[0]) === Number(r.rank1));
-  const hitTrio = trueTop3.length === 3 && sps.some((t) => {
+  const rawWin = hasResult && wins.some((t) => Number(t.combo?.[0]) === Number(r.rank1));
+  const rawTrio = trueTop3.length === 3 && sps.some((t) => {
     const set = new Set((t.combo || []).map(Number));
     return trueTop3.every((w) => set.has(Number(w))) && set.size === 3;
   });
-  const hitTf = trueTop3.length === 3 && sts.some((t) => {
+  const rawTf = trueTop3.length === 3 && sts.some((t) => {
     const c = (t.combo || []).map(Number);
     return c.length === 3
       && c[0] === Number(r.rank1)
       && c[1] === Number(r.rank2)
       && c[2] === Number(r.rank3);
   });
+  const timing = item.prediction_timing || {};
+  if (!verifiable) {
+    return {
+      hasResult,
+      hitWin: false,
+      hitTrio: false,
+      hitTf: false,
+      anyHit: false,
+      unverifiable: hasResult,
+      timingStatus: timing.status,
+      timingMessage: timing.message,
+    };
+  }
   return {
     hasResult,
-    hitWin,
-    hitTrio,
-    hitTf,
-    anyHit: hitWin || hitTrio || hitTf,
+    hitWin: rawWin,
+    hitTrio: rawTrio,
+    hitTf: rawTf,
+    anyHit: rawWin || rawTrio || rawTf,
+    unverifiable: false,
+    timingStatus: timing.status,
+    timingMessage: timing.message,
   };
 }
 
@@ -397,7 +414,7 @@ function filterAndSortPrepared(prepared) {
     if (filter === "win_hit") return hits.hitWin;
     if (filter === "trio_hit") return hits.hitTrio;
     if (filter === "trifecta_hit") return hits.hitTf;
-    if (filter === "miss") return hits.hasResult && !hits.anyHit;
+    if (filter === "miss") return hits.hasResult && !hits.unverifiable && !hits.anyHit;
     if (filter === "pending") return !hits.hasResult;
     return true;
   });
@@ -828,12 +845,14 @@ function renderPredictions() {
 
   const upsetCount = prepared.filter((x) => x.item.has_upset).length;
   const confidentRows = prepared.filter((x) => x.item.is_confident || x.item.confidence?.is_confident);
-  const confidentSettled = confidentRows.filter((x) => x.hits.hasResult);
+  const confidentSettled = confidentRows.filter((x) => x.hits.hasResult && !x.hits.unverifiable);
   const confidentTrio = confidentSettled.filter((x) => x.hits.hitTrio).length;
-  const hitAny = prepared.filter((x) => x.hits.anyHit).length;
-  const hitTf = prepared.filter((x) => x.hits.hitTf).length;
-  const hitTrio = prepared.filter((x) => x.hits.hitTrio).length;
-  const settled = prepared.filter((x) => x.hits.hasResult).length;
+  const verifiablePrepared = prepared.filter((x) => !x.hits.unverifiable);
+  const hitAny = verifiablePrepared.filter((x) => x.hits.anyHit).length;
+  const hitTf = verifiablePrepared.filter((x) => x.hits.hitTf).length;
+  const hitTrio = verifiablePrepared.filter((x) => x.hits.hitTrio).length;
+  const settled = verifiablePrepared.filter((x) => x.hits.hasResult).length;
+  const unverifiableN = prepared.filter((x) => x.hits.unverifiable).length;
 
   summary.innerHTML = `
     <div class="stat"><div class="label">対象レース</div><div class="value">${data.count}</div></div>
@@ -842,6 +861,7 @@ function renderPredictions() {
     <div class="stat"><div class="label">自信あり3連複</div><div class="value">${confidentTrio}<span class="sub"> / ${confidentSettled.length || 0}</span></div></div>
     <div class="stat"><div class="label">的中（いずれか）</div><div class="value">${hitAny}<span class="sub"> / ${settled}</span></div></div>
     <div class="stat"><div class="label">3連複 / 3連単的中</div><div class="value">${hitTrio} / ${hitTf}</div></div>
+    ${unverifiableN ? `<div class="stat"><div class="label">的中除外</div><div class="value">${unverifiableN}<span class="sub">R</span></div></div>` : ""}
     <div class="stat"><div class="label">穴候補あり</div><div class="value">${upsetCount}</div></div>
     <div class="stat"><div class="label">日付</div><div class="value" style="font-size:1.1rem">${data.date}</div></div>
   `;
@@ -880,11 +900,11 @@ function renderPredictions() {
       : (conf.label
         ? `<span class="badge">${conf.label}${confScore != null ? " " + Math.round(Number(confScore) * 100) + "%" : ""}</span>`
         : "");
-    const confReasons = (conf.reasons || []).slice(0, compact ? 2 : 4)
+    const confReasons = (conf.reasons || []).slice(0, compact ? 3 : 6)
       .map((r) => `<li>${r}</li>`).join("");
     const confBlock = confScore != null
       ? `<div class="race-thesis confidence"><strong>自信度 ${Math.round(Number(confScore) * 100)}%（${conf.label || "—"}）</strong>
-          ${confReasons ? `<ul>${confReasons}</ul>` : "<p>場・選手・天候・モデル出力から推定</p>"}
+          ${confReasons ? `<ul>${confReasons}</ul>` : "<p>場・選手・天候・過去傾向・モデル出力から推定</p>"}
         </div>`
       : "";
     const ticketReasons = item.ticket_reasons || {};
@@ -910,7 +930,7 @@ function renderPredictions() {
       const odd = t.odds != null ? Number(t.odds) : null;
       const ev = t.ev != null ? Number(t.ev) : null;
       let mark = "";
-      if (hits.hasResult) {
+      if (hits.hasResult && !hits.unverifiable) {
         if (kind === "win" && Number(t.combo?.[0]) === Number(item.result.rank1)) mark = ' <span class="badge hit">的中</span>';
         if (kind === "trio") {
           const trueTop3 = [item.result.rank1, item.result.rank2, item.result.rank3];
@@ -996,6 +1016,12 @@ function renderPredictions() {
         return `<div class="meta">結果: 未確定（予測のみ）</div>`;
       }
       const kim = item.result?.kimarite ? ` / ${item.result.kimarite}` : "";
+      if (hits.unverifiable) {
+        const msg = hits.timingMessage || "結果確定後の再予想のため、的中表示は行いません。";
+        return `<div class="meta timing-warn">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}${kim}
+          <span class="badge upset" title="${msg}">的中表示なし（${hits.timingStatus || "再予想"}）</span>
+        </div>`;
+      }
       return `<div class="meta">結果: ${item.result.rank1}-${item.result.rank2}-${item.result.rank3}${kim}
         <span class="badge ${hits.hitWin ? "hit" : "upset"}">${hits.hitWin ? "単勝的中" : "単勝外れ"}</span>
         <span class="badge ${hits.hitTrio ? "hit" : "upset"}">${hits.hitTrio ? "3連複的中" : "3連複外れ"}</span>

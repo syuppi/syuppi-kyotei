@@ -18,7 +18,7 @@ from boatrace.db.models import (
     VenueBias,
     VenueCourseStats,
 )
-from boatrace.features.builder import DEFAULT_WEIGHTS, wind_bucket
+from boatrace.prediction.timing import is_hit_verifiable
 from boatrace.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -244,6 +244,8 @@ class LearningService:
             )
             result = card.result
             if not pred or not result or not result.rank1_waku:
+                continue
+            if not is_hit_verifiable(card, pred):
                 continue
 
             # 複数候補のカバー的中（単勝/3連複/3連単 各2〜3）
