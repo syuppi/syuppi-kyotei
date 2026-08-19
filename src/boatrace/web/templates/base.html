@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="BOAT FORECAST" />
   <title>{% block title %}ボートレース予想{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,6 +20,7 @@
       <a href="/venues">場の傾向</a>
       <a href="/search">条件検索</a>
       <a href="/accuracy">精度検証</a>
+      <button type="button" id="header-reload" class="btn-header-reload" title="ページを更新（ホーム画面追加時はこちら）" hidden>↻ 更新</button>
     </nav>
   </header>
   <main class="container">
@@ -27,5 +30,15 @@
     <p>場ごとのクセを学習し、説明可能なスコアで予測します。</p>
   </footer>
   {% block scripts %}{% endblock %}
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      var btn = document.getElementById("header-reload");
+      if (!btn) return;
+      var isPwa = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+      var isMobile = window.matchMedia("(max-width: 640px)").matches;
+      if (isPwa || isMobile) btn.hidden = false;
+      btn.addEventListener("click", function () { window.location.reload(); });
+    });
+  </script>
 </body>
 </html>

@@ -4,6 +4,129 @@ async function jget(url) {
   return res.json();
 }
 
+/** 取得・解析中の表示（PWAでも状態が分かるように） */
+let _fetchProgressDepth = 0;
+
+function isStandalonePwa() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true
+  );
+}
+
+function reloadAppPage() {
+  window.location.reload();
+}
+
+function initReloadButtons() {
+  const bind = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("click", () => reloadAppPage());
+  };
+  bind("page-reload");
+  bind("header-reload");
+  bind("fetch-done-reload");
+
+  const headerReload = document.getElementById("header-reload");
+  if (headerReload && isStandalonePwa()) {
+    headerReload.hidden = false;
+  }
+
+  const doneBanner = document.getElementById("fetch-done-banner");
+  const doneContinue = document.getElementById("fetch-done-continue");
+  if (doneContinue && doneBanner) {
+    doneContinue.addEventListener("click", () => {
+      doneBanner.hidden = true;
+    });
+  }
+}
+
+function setFetchProgress(active, { title, detail } = {}) {
+  const panel = document.getElementById("fetch-progress");
+  const titleEl = document.getElementById("fetch-progress-title");
+  const detailEl = document.getElementById("fetch-progress-detail");
+  if (!panel) return;
+
+  if (active) {
+    _fetchProgressDepth += 1;
+    panel.hidden = false;
+    if (titleEl) titleEl.textContent = title || "取得中…";
+    if (detailEl) detailEl.textContent = detail || "";
+    document.body.classList.add("is-fetching");
+    hideFetchDoneBanner();
+    return;
+  }
+
+  _fetchProgressDepth = Math.max(0, _fetchProgressDepth - 1);
+  if (_fetchProgressDepth === 0) {
+    panel.hidden = true;
+    document.body.classList.remove("is-fetching");
+  }
+}
+
+function updateFetchProgress({ title, detail } = {}) {
+  const titleEl = document.getElementById("fetch-progress-title");
+  const detailEl = document.getElementById("fetch-progress-detail");
+  if (titleEl && title) titleEl.textContent = title;
+  if (detailEl && detail != null) detailEl.textContent = detail;
+}
+
+function showFetchDoneBanner(message) {
+  const banner = document.getElementById("fetch-done-banner");
+  const msgEl = document.getElementById("fetch-done-message");
+  if (!banner) return;
+  if (msgEl) {
+    msgEl.textContent = message || "取得が完了しました。ページ更新で最新表示にできます。";
+  }
+  banner.hidden = false;
+}
+
+function hideFetchDoneBanner() {
+  const banner = document.getElementById("fetch-done-banner");
+  if (banner) banner.hidden = true;
+}
+
+async function waitForServerReady(maxMs = 120000) {
+  setFetchProgress(true, {
+    title: "サーバー起動中…",
+    detail: "スリープ復帰後は1〜2分かかることがあります。この画面は閉じずにお待ちください。",
+  });
+  const started = Date.now();
+  let attempt = 0;
+  while (Date.now() - started < maxMs) {
+    attempt += 1;
+    try {
+      const res = await fetch("/health", { cache: "no-store" });
+      if (res.ok) {
+        const health = await res.json();
+        if (health.status === "ok") {
+          setFetchProgress(false);
+          return health;
+        }
+      }
+    } catch (_) {
+      /* retry */
+    }
+    updateFetchProgress({
+      detail: `起動待ち…（${attempt}回目）スリープ復帰後は1〜2分かかることがあります。`,
+    });
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  setFetchProgress(false);
+  throw new Error("サーバー起動がタイムアウトしました。しばらく待って「ページ更新」を押してください。");
+}
+
+function todayISO() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+document.addEventListener("DOMContentLoaded", initReloadButtons);
+
 function pct(v) {
   if (v == null) return "-";
   return `${(Number(v) * 100).toFixed(1)}%`;
@@ -73,13 +196,6 @@ function renderTicketRankPanel(el, payload, { compact = false } = {}) {
     </div>
     ${preNote}
   `;
-}
-
-function todayISO() {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 async function fillVenues(selectEl, includeAll = true) {
@@ -340,62 +456,85 @@ async function bootPredictions() {
 
   async function refreshVenueOptions(opts = {}) {
     const { autoFetch = true } = opts;
-    setStatus("開催場を確認中…");
-    let data = await fillActiveVenues(venue, day.value, {
-      confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+    setFetchProgress(true, {
+      title: "開催場を確認中…",
+      detail: "出走表の有無を確認しています。",
     });
-    let hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
+    setStatus("開催場を確認中…");
+    try {
+      let data = await fillActiveVenues(venue, day.value, {
+        confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+      });
+      let hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
 
-    if (!hasList && autoFetch && !(venueConfOnly && venueConfOnly.checked)) {
-      setStatus("出走表を取得中…（スリープ復帰後は1〜2分かかることがあります）");
-      try {
-        const prep = new URLSearchParams({ day: day.value });
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 120000);
-        const res = await fetch(`/api/day/fetch-cards?${prep}`, {
-          method: "POST",
-          signal: controller.signal,
+      if (!hasList && autoFetch && !(venueConfOnly && venueConfOnly.checked)) {
+        updateFetchProgress({
+          title: "出走表を取得中…",
+          detail: "OpenAPIから本日分をダウンロードしています。1〜2分かかることがあります。",
         });
-        clearTimeout(timer);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const fetched = await res.json();
-        setStatus(
-          (fetched.venue_count || 0) > 0
-            ? `出走表: ${fetched.venue_count}場 / ${fetched.race_count}R`
-            : `出走表0件（${fetched.date || day.value}）`
-        );
-        data = await fillActiveVenues(venue, day.value, {
-          confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
-        });
-        hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
-      } catch (e) {
-        setStatus(`出走表の取得に失敗: ${e.message || e}`);
+        setStatus("出走表を取得中…");
+        try {
+          const prep = new URLSearchParams({ day: day.value });
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 120000);
+          const res = await fetch(`/api/day/fetch-cards?${prep}`, {
+            method: "POST",
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const fetched = await res.json();
+          const vcount = fetched.venue_count || 0;
+          const rcount = fetched.race_count || 0;
+          setStatus(
+            vcount > 0
+              ? `出走表取得完了: ${vcount}場 / ${rcount}R`
+              : `出走表0件（${fetched.date || day.value}）`
+          );
+          if (vcount > 0) {
+            showFetchDoneBanner(
+              `出走表の取得が完了しました（${vcount}場 / ${rcount}R）。ホーム画面追加時は「ページ更新」を押してください。`
+            );
+          }
+          updateFetchProgress({
+            title: "場一覧を更新中…",
+            detail: "取得した出走表を反映しています。",
+          });
+          data = await fillActiveVenues(venue, day.value, {
+            confidentOnly: Boolean(venueConfOnly && venueConfOnly.checked),
+          });
+          hasList = (data.items || []).length > 0 || Number(data.confident_total || 0) > 0;
+        } catch (e) {
+          setStatus(`出走表の取得に失敗: ${e.message || e}`);
+        }
       }
-    }
 
-    setAnalyzeEnabled(Boolean(venue.value));
-    if (!hasList) {
-      clearRaceView(
-        venueConfOnly && venueConfOnly.checked
-          ? "この日の自信ありレースがありません。先に解析するか、チェックを外してください。"
-          : "開催場がありません。ページを再読み込みするか、1〜2分待ってからもう一度お試しください。"
-      );
-      setStatus(venueConfOnly && venueConfOnly.checked ? "自信ありの場なし" : "開催場なし");
-      return false;
+      setAnalyzeEnabled(Boolean(venue.value));
+      if (!hasList) {
+        clearRaceView(
+          venueConfOnly && venueConfOnly.checked
+            ? "この日の自信ありレースがありません。先に解析するか、チェックを外してください。"
+            : "開催場がありません。「ページ更新」を押すか、1〜2分待ってからもう一度お試しください。"
+        );
+        setStatus(venueConfOnly && venueConfOnly.checked ? "自信ありの場なし" : "開催場なし");
+        return false;
+      }
+      if (!venue.value) {
+        const tip = Number(data.confident_total || 0) > 0
+          ? `場を選ぶか「自信あり（全場）」を選んでください（自信あり ${data.confident_total}R）`
+          : "場を選択すると、その場だけ解析・表示します。";
+        clearRaceView(tip);
+        setStatus(
+          venueConfOnly && venueConfOnly.checked
+            ? `自信ありのある場 ${(data.items || []).length} — 場を選んでください`
+            : `${(data.items || []).length}場が開催中 — 場を選んでください`
+        );
+        return false;
+      }
+      return true;
+    } finally {
+      setFetchProgress(false);
     }
-    if (!venue.value) {
-      const tip = Number(data.confident_total || 0) > 0
-        ? `場を選ぶか「自信あり（全場）」を選んでください（自信あり ${data.confident_total}R）`
-        : "場を選択すると、その場だけ解析・表示します。";
-      clearRaceView(tip);
-      setStatus(
-        venueConfOnly && venueConfOnly.checked
-          ? `自信ありのある場 ${(data.items || []).length} — 場を選んでください`
-          : `${(data.items || []).length}場が開催中 — 場を選んでください`
-      );
-      return false;
-    }
-    return true;
   }
 
   async function load(opts = {}) {
@@ -412,6 +551,17 @@ async function bootPredictions() {
     const vid = venueQueryId();
     if (vid) params.set("venue_id", vid);
     if (allConf) params.set("confident_only", "true");
+    const progressTitle = prepare
+      ? (allConf ? "自信ありレースを読み込み中…" : "出走表を取得して予想中…")
+      : refresh
+        ? "再予想中…"
+        : "予想を読み込み中…";
+    setFetchProgress(true, {
+      title: progressTitle,
+      detail: prepare && !allConf
+        ? "この場だけ解析します。完了まで数十秒〜2分かかることがあります。"
+        : "処理中です。この画面は閉じずにお待ちください。",
+    });
     try {
       let data;
       if (prepare) {
@@ -420,6 +570,10 @@ async function bootPredictions() {
           data = await jget(`/api/predictions/today?${params}`);
         } else {
           setStatus("出走表を取得して予想中…（この場のみ・高速モード）");
+          updateFetchProgress({
+            title: "出走表を取得して予想中…",
+            detail: "OpenAPI取得と機械学習予想を実行しています。",
+          });
           const prep = new URLSearchParams(params);
           prep.set("fast", "true");
           if (force) prep.set("force", "true");
@@ -457,6 +611,10 @@ async function bootPredictions() {
         data = await jget(`/api/predictions/today?${params}`);
         if ((!data.items || data.items.length === 0) && !allConf) {
           setStatus("データが無いためこの場を取得・予想しています…");
+          updateFetchProgress({
+            title: "出走表を取得して予想中…",
+            detail: "初回表示のため、この場のデータを取得しています。",
+          });
           const prep = new URLSearchParams(params);
           prep.set("fast", "true");
           const controller = new AbortController();
@@ -505,9 +663,14 @@ async function bootPredictions() {
       const cached = data.cached ? "（キャッシュ）" : "";
       const scope = allConf ? "全場・自信あり" : venue.value;
       setStatus(`更新済${cached}（${scope} / ${data.count || 0}R / 自信あり ${confN}R / オッズあり ${oddsN}R）`);
+      if ((prepare || (data.items && data.items.length > 0)) && isStandalonePwa()) {
+        showFetchDoneBanner("解析が完了しました。表示を最新にするには「ページ更新」を押してください。");
+      }
     } catch (e) {
       setStatus(`エラー: ${e.message || e}`);
       throw e;
+    } finally {
+      setFetchProgress(false);
     }
   }
 
@@ -534,6 +697,14 @@ async function bootPredictions() {
   if (filterEl) filterEl.addEventListener("change", () => renderPredictions());
   if (sortEl) sortEl.addEventListener("change", () => renderPredictions());
   if (compactEl) compactEl.addEventListener("change", () => renderPredictions());
+
+  try {
+    await waitForServerReady();
+  } catch (e) {
+    setStatus(String(e.message || e));
+    clearRaceView("サーバー起動を待てませんでした。「ページ更新」を押して再度お試しください。");
+    return;
+  }
 
   const ready = await refreshVenueOptions();
   if (ready) await load({ prepare: false });

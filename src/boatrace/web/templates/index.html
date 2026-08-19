@@ -42,8 +42,23 @@
       <input type="checkbox" id="compact-mode" checked />
     </label>
     <button id="refresh" class="btn" disabled>この場を解析</button>
+    <button type="button" id="page-reload" class="btn btn-secondary" title="ブラウザの更新の代わり（ホーム画面追加時）">ページ更新</button>
   </div>
-  <p id="load-status" class="meta" style="margin-top:0.6rem"></p>
+  <div id="fetch-progress" class="fetch-progress" hidden role="status" aria-live="polite">
+    <div class="fetch-progress-inner">
+      <span class="fetch-spinner" aria-hidden="true"></span>
+      <div class="fetch-progress-text">
+        <strong id="fetch-progress-title">取得中…</strong>
+        <p id="fetch-progress-detail" class="meta"></p>
+      </div>
+    </div>
+  </div>
+  <div id="fetch-done-banner" class="fetch-done-banner" hidden role="status" aria-live="polite">
+    <span id="fetch-done-message">取得が完了しました。</span>
+    <button type="button" id="fetch-done-reload" class="btn btn-secondary btn-sm">ページ更新</button>
+    <button type="button" id="fetch-done-continue" class="btn btn-sm">このまま続ける</button>
+  </div>
+  <p id="load-status" class="meta load-status" style="margin-top:0.6rem"></p>
 </section>
 
 <section id="summary" class="summary-row"></section>
@@ -51,7 +66,7 @@
 <section id="list" class="race-list" aria-live="polite"></section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/app.js?v=ticket-rank-stats-1"></script>
+<script src="/static/app.js?v=mobile-fetch-ui-1"></script>
 <script>
   bootPredictions();
 </script>

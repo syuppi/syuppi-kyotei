@@ -123,6 +123,103 @@ input, select {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(62,207,173,0.25); }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.btn-secondary:hover {
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  background: rgba(255, 255, 255, 0.12);
+}
+.btn-sm {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.85rem;
+}
+.btn-header-reload {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.btn-header-reload:hover { background: rgba(62, 207, 173, 0.12); }
+
+body.is-fetching .controls input,
+body.is-fetching .controls select,
+body.is-fetching .controls .btn:not(#page-reload):not(#fetch-done-reload) {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.fetch-progress {
+  margin-top: 0.85rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(62, 207, 173, 0.35);
+  background: rgba(62, 207, 173, 0.12);
+  animation: pulse-border 1.6s ease-in-out infinite;
+}
+.fetch-progress-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.fetch-progress-text { flex: 1; min-width: 0; }
+.fetch-progress-text strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+.fetch-progress-text .meta {
+  margin: 0.25rem 0 0;
+  color: var(--ink);
+  line-height: 1.45;
+}
+.fetch-spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid rgba(62, 207, 173, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  animation: spin 0.85s linear infinite;
+}
+.fetch-done-banner {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  background: rgba(240, 180, 41, 0.12);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+.fetch-done-banner span { flex: 1 1 12rem; }
+.load-status { min-height: 1.25rem; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(62, 207, 173, 0.35); }
+  50% { border-color: rgba(62, 207, 173, 0.65); }
+}
+
+@media (max-width: 640px) {
+  .btn-header-reload { display: inline-flex !important; }
+  #page-reload { width: 100%; }
+  .fetch-done-banner .btn { flex: 1 1 auto; }
+}
 
 .summary-row {
   display: grid;
